@@ -27,11 +27,11 @@ func test_uninstantiable_level_returns_home_without_showing_game() -> void:
 	var boot_completed: bool = await wait_until(func() -> bool: return not loading.visible)
 	if not assert_true(boot_completed):
 		return
-	TtpGuiApi.set_levels({
+	TtpGuiApi.configure_levels({
 		"invalid_level": {"name": "Nivel inválido", "enabled": true, "scene_path": "res://icon.svg"},
 	})
-	TtpGuiApi.load_level("invalid_level")
-	var load_completed: bool = await wait_until(func() -> bool: return not TtpGuiApi.resource_batch.is_loading())
+	TtpGuiApi.request_level_load("invalid_level")
+	var load_completed: bool = await wait_until(func() -> bool: return not TtpGuiApi.is_loading())
 	if not assert_true(load_completed):
 		return
 	assert_false(loading.visible, "Un fallo no debe dejar la pantalla de carga bloqueando la UI.")

@@ -39,7 +39,7 @@ func _ready() -> void:
 	_connect_api()
 	_configure_demo_data()
 	_loading.visible = true
-	TtpGuiApi.load_first_level_to_play()
+	TtpGuiApi.request_initial_level_load()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -58,7 +58,7 @@ func show_home() -> void:
 	_initial_boot = false
 	_home_screen.visible = true
 	_game_screen.visible = false
-	_update_coins(TtpGuiApi.get_total_players_coins())
+	_update_coins(TtpGuiApi.get_currency_balance())
 
 
 func show_level(first_level_to_play: Dictionary) -> bool:
@@ -66,7 +66,7 @@ func show_level(first_level_to_play: Dictionary) -> bool:
 	if scene_path.is_empty():
 		_on_operation_rejected("El nivel no tiene una escena configurada.")
 		return false
-	var resource: Resource = TtpGuiApi.get_resource_loaded(scene_path)
+	var resource: Resource = TtpGuiApi.get_loaded_resource(scene_path)
 	var packed_scene: PackedScene = resource as PackedScene
 	if packed_scene == null:
 		_on_operation_rejected("No se pudo instanciar el nivel cargado.")
@@ -87,7 +87,7 @@ func show_level(first_level_to_play: Dictionary) -> bool:
 func change_current_level(new_level: Dictionary) -> void:
 	if _current_level_node != null and is_instance_valid(_current_level_node) and _current_level_node.has_method("stop_level"):
 		_current_level_node.call("stop_level")
-	TtpGuiApi.load_level(new_level.get("key", _current_level_key))
+	TtpGuiApi.request_level_load(new_level.get("key", _current_level_key))
 
 
 func set_current_level(level_node: Node) -> void:
@@ -111,23 +111,21 @@ func update_total_coins(total: int) -> void:
 	_update_coins(total)
 
 
-func update_sfx_game_configuration() -> void:
-	var enabled: bool = bool(TtpGuiApi.model.configuration.get("sfx", true))
+func update_sfx_game_configuration(enabled: bool) -> void:
 	_show_toast("Efectos activos" if enabled else "Efectos silenciados")
 
 
-func update_music_game_configuration() -> void:
-	var enabled: bool = bool(TtpGuiApi.model.configuration.get("music", true))
+func update_music_game_configuration(enabled: bool) -> void:
 	_show_toast("Música activa" if enabled else "Música silenciada")
 
 
 func level_win(level_key: Variant, stars: int, score: int, reward_coins: int) -> void:
 	var next_level: Variant = unlock_next_level(level_key)
-	TtpGuiApi.level_win(level_key, TtpGuiApi.get_level(level_key), stars, score, reward_coins, next_level)
+	TtpGuiApi.complete_level(level_key, stars, score, reward_coins, next_level)
 
 
 func unlock_next_level(current_level: Variant) -> Variant:
-	var keys: Array = TtpGuiApi.model.levels.keys()
+	var keys: Array = TtpGuiApi.get_levels().keys()
 	var index: int = keys.find(current_level)
 	return keys[(index + 1) % keys.size()] if index >= 0 and not keys.is_empty() else "level1"
 
@@ -138,12 +136,12 @@ func retry_level(level: Dictionary) -> void:
 
 func load_next_level(level: Dictionary) -> void:
 	var next_level: Dictionary = level.duplicate(true)
-	next_level["key"] = level.get("key", TtpGuiApi.get_next_level_to_play())
+	next_level["key"] = level.get("key", TtpGuiApi.get_next_available_level())
 	change_current_level(next_level)
 
 
 func level_lose(level_key: Variant) -> void:
-	TtpGuiApi.level_lose(level_key)
+	TtpGuiApi.report_level_loss(level_key)
 
 
 func revive_level(_level: Dictionary) -> void:
@@ -152,9 +150,8 @@ func revive_level(_level: Dictionary) -> void:
 	_show_game({"level_key": _current_level_key, "revived": true})
 
 
-func duplicate_won_coins(information: Array) -> void:
-	if information.size() >= 2:
-		_update_coins(int(information[1]))
+func duplicate_won_coins(_next_level: Dictionary, balance: int) -> void:
+	_update_coins(balance)
 
 
 func _clear_scaffold() -> void:
@@ -360,19 +357,19 @@ func _build_game_screen() -> VBoxContainer:
 
 
 func _connect_api() -> void:
-	TtpGuiApi.screen_requested.connect(_on_screen_requested)
-	TtpGuiApi.loading_started.connect(_on_loading_started)
-	TtpGuiApi.loading_completed.connect(_on_loading_completed)
-	TtpGuiApi.new_total_coins.connect(_update_coins)
-	TtpGuiApi.operation_rejected.connect(_on_operation_rejected)
-	TtpGuiApi.store_game_update_item_loadded.connect(update_item_game_loaded)
-	TtpGuiApi.store_game_buy_item.connect(unblock_item_game)
-	TtpGuiApi.modal_config_change_sfx_status.connect(update_sfx_game_configuration)
-	TtpGuiApi.modal_config_change_music_status.connect(update_music_game_configuration)
-	TtpGuiApi.modal_lose_video_reward_showed.connect(revive_level)
-	TtpGuiApi.modal_win_video_reward_showed.connect(duplicate_won_coins)
-	TtpGuiApi.resource_batch.stage_updated.connect(_on_loading_progress)
-	TtpGuiApi.model.store_changed.connect(_on_store_changed)
+	TtpGuiApi.navigation_requested.connect(_on_screen_requested)
+	TtpGuiApi.level_load_started.connect(_on_loading_started)
+	TtpGuiApi.level_load_completed.connect(_on_loading_completed)
+	TtpGuiApi.currency_balance_changed.connect(_update_coins)
+	TtpGuiApi.action_rejected.connect(_on_operation_rejected)
+	TtpGuiApi.item_equipped.connect(update_item_game_loaded)
+	TtpGuiApi.item_purchased.connect(unblock_item_game)
+	TtpGuiApi.sfx_setting_changed.connect(update_sfx_game_configuration)
+	TtpGuiApi.music_setting_changed.connect(update_music_game_configuration)
+	TtpGuiApi.revive_reward_claimed.connect(revive_level)
+	TtpGuiApi.reward_doubling_claimed.connect(duplicate_won_coins)
+	TtpGuiApi.loading_progress_changed.connect(_on_loading_progress)
+	TtpGuiApi.store_catalog_changed.connect(_on_store_changed)
 
 
 func _configure_demo_data() -> void:
@@ -386,22 +383,22 @@ func _configure_demo_data() -> void:
 			"scene_path": "res://demo/scenes/level_stub.tscn",
 			"enabled": index == 1,
 		}
-	TtpGuiApi.set_levels(levels)
-	TtpGuiApi.set_player_coins(800)
-	TtpGuiApi.set_game_configuration({
+	TtpGuiApi.configure_levels(levels)
+	TtpGuiApi.set_currency_balance(800)
+	TtpGuiApi.configure_settings({
 		"sfx": true,
 		"music": true,
 		"url_terms_and_conditions": "https://example.com/terms",
 		"url_rate_us": "https://example.com/rate",
 		"url_video": "https://example.com/promo",
 	})
-	TtpGuiApi.set_store_currency({
+	TtpGuiApi.configure_currency_products({
 		"coins_small": {"title": "Bolsa brillante", "description": "500 monedas", "price": "USD 0,99", "bought": false},
 		"coins_medium": {"title": "Cofre arcade", "description": "1.500 monedas", "price": "USD 2,49", "bought": false},
 		"coins_large": {"title": "Tesoro total", "description": "4.000 monedas", "price": "USD 4,99", "bought": false},
 	})
-	TtpGuiApi.set_list_value_items_store_game({"coins_small": 500, "coins_medium": 1500, "coins_large": 4000})
-	TtpGuiApi.set_store_game({
+	TtpGuiApi.configure_currency_rewards({"coins_small": 500, "coins_medium": 1500, "coins_large": 4000})
+	TtpGuiApi.configure_items({
 		"sun_hat": {"type": 1, "title": "Sombrero solar", "description": "El clásico del kit", "price": "0", "bought": true, "load": true, "group": "hat", "colorTitle": "#7a2d21"},
 		"space_hat": {"type": 1, "title": "Casco espacial", "description": "Un look de otro mundo", "price": "450", "bought": false, "load": false, "group": "hat", "colorTitle": "#7a2d21"},
 		"coin_trail": {"type": 0, "title": "Estela dorada", "description": "Brilla al moverte", "price": "250", "bought": false, "colorTitle": "#7a2d21"},
@@ -415,13 +412,13 @@ func _configure_demo_data() -> void:
 
 
 func _on_tap_to_play() -> void:
-	TtpGuiApi.tap_to_play_pressed()
+	TtpGuiApi.start_or_resume_game()
 
 
 func _show_game(payload: Dictionary) -> void:
 	var requested_key: Variant = payload.get("level_key", _current_level_key)
 	if not is_instance_valid(_current_level_node) or requested_key != _current_level_key:
-		TtpGuiApi.load_level(requested_key)
+		TtpGuiApi.request_level_load(requested_key)
 		return
 	get_tree().paused = false
 	_close_dialog()
@@ -429,13 +426,13 @@ func _show_game(payload: Dictionary) -> void:
 	_game_level_label.text = str(level.get("name", "Nivel de prueba"))
 	_home_screen.visible = false
 	_game_screen.visible = true
-	_update_coins(TtpGuiApi.get_total_players_coins())
+	_update_coins(TtpGuiApi.get_currency_balance())
 	if bool(payload.get("revived", false)):
 		_show_toast("¡Reanimado! Continúa la partida")
 
 
 func _show_levels() -> void:
-	var enabled: Array = TtpGuiApi.model.get_enabled_level_keys()
+	var enabled: Array = TtpGuiApi.get_enabled_level_keys()
 	if enabled.is_empty():
 		_on_operation_rejected("No hay niveles disponibles.")
 		return
@@ -455,7 +452,7 @@ func _render_level_selector(enabled: Array) -> void:
 	stars.alignment = BoxContainer.ALIGNMENT_CENTER
 	_dialog_body.add_child(stars)
 	stars.update_modal(int(level.get("max_stars", 0)))
-	_dialog_body.add_child(UI.label("Mejor puntuación: %s" % TtpGuiApi.model.format_number(level.get("max_score", 0)), 18, COLOR_INK, HORIZONTAL_ALIGNMENT_CENTER))
+	_dialog_body.add_child(UI.label("Mejor puntuación: %s" % TtpGuiApi.format_number(level.get("max_score", 0)), 18, COLOR_INK, HORIZONTAL_ALIGNMENT_CENTER))
 	var actions: HBoxContainer = HBoxContainer.new()
 	actions.name = "LevelActions"
 	actions.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -470,13 +467,13 @@ func _render_level_selector(enabled: Array) -> void:
 
 
 func _change_level_preview(direction: int) -> void:
-	var enabled: Array = TtpGuiApi.model.get_enabled_level_keys()
+	var enabled: Array = TtpGuiApi.get_enabled_level_keys()
 	_selected_level_index = wrapi(_selected_level_index + direction, 0, enabled.size())
 	_render_level_selector(enabled)
 
 
 func _load_selected_level() -> void:
-	var enabled: Array = TtpGuiApi.model.get_enabled_level_keys()
+	var enabled: Array = TtpGuiApi.get_enabled_level_keys()
 	if enabled.is_empty():
 		return
 	TtpGuiApi.change_level(enabled[_selected_level_index])
@@ -484,7 +481,7 @@ func _load_selected_level() -> void:
 
 func _show_config() -> void:
 	_begin_dialog("CONFIGURACIÓN")
-	var config: Dictionary = TtpGuiApi.model.configuration
+	var config: Dictionary = TtpGuiApi.get_settings()
 	var grid: GridContainer = GridContainer.new()
 	grid.name = "ConfigGrid"
 	grid.columns = 2
@@ -505,29 +502,29 @@ func _show_config() -> void:
 
 
 func _toggle_sfx() -> void:
-	TtpGuiApi.notify_change_sfx_status()
+	TtpGuiApi.toggle_sfx()
 	_show_config()
 
 
 func _toggle_music() -> void:
-	TtpGuiApi.notify_change_music_status()
+	TtpGuiApi.toggle_music()
 	_show_config()
 
 
 func _open_terms() -> void:
-	var uri: String = str(TtpGuiApi.model.configuration.get("url_terms_and_conditions", ""))
+	var uri: String = str(TtpGuiApi.get_settings().get("url_terms_and_conditions", ""))
 	if not uri.is_empty():
 		OS.shell_open(uri)
 
 
 func _open_rate_page() -> void:
-	var uri: String = str(TtpGuiApi.model.configuration.get("url_rate_us", ""))
+	var uri: String = str(TtpGuiApi.get_settings().get("url_rate_us", ""))
 	if not uri.is_empty():
 		OS.shell_open(uri)
 
 
 func _open_promo_web_page() -> void:
-	var uri: String = str(TtpGuiApi.model.configuration.get("url_video", ""))
+	var uri: String = str(TtpGuiApi.get_settings().get("url_video", ""))
 	if not uri.is_empty():
 		OS.shell_open(uri)
 
@@ -545,7 +542,7 @@ func _show_store() -> void:
 	var currency_tab: Button = UI.button("MONEDAS", func() -> void: _set_store_mode("currency"), Vector2(210.0, 52.0))
 	currency_tab.disabled = _store_mode == "currency"
 	tabs.add_child(currency_tab)
-	var balance: Label = UI.label("Saldo: %s" % TtpGuiApi.model.format_number(TtpGuiApi.get_total_players_coins()), 20, COLOR_INK, HORIZONTAL_ALIGNMENT_CENTER)
+	var balance: Label = UI.label("Saldo: %s" % TtpGuiApi.format_number(TtpGuiApi.get_currency_balance()), 20, COLOR_INK, HORIZONTAL_ALIGNMENT_CENTER)
 	balance.name = "StoreBalance"
 	_dialog_body.add_child(balance)
 	var list: DraggableComponent = DraggableComponent.new()
@@ -554,9 +551,9 @@ func _show_store() -> void:
 	list.item_pressed.connect(_on_store_item_pressed)
 	_dialog_body.add_child(list)
 	if _store_mode == "game":
-		list.set_game_items(TtpGuiApi.model.game_items)
+		list.set_game_items(TtpGuiApi.get_items())
 	else:
-		list.set_currency_items(TtpGuiApi.model.currency_items)
+		list.set_currency_items(TtpGuiApi.get_currency_products())
 	_dialog_body.add_child(UI.button("VOLVER", _close_dialog, Vector2(220.0, 52.0)))
 
 
@@ -569,9 +566,9 @@ func _on_store_item_pressed(item_key: Variant) -> void:
 	_pending_store_key = item_key.duplicate() if item_key is Array else item_key
 	if item_key is Array:
 		var path: Array = item_key as Array
-		var item: Dictionary = TtpGuiApi.get_item_in_store_game_dictionary(path)
+		var item: Dictionary = TtpGuiApi.get_item(path)
 		if bool(item.get("bought", false)) and item.has("load"):
-			TtpGuiApi.update_item_game_loaded(path)
+			TtpGuiApi.equip_item(path)
 			_show_store()
 			return
 		if bool(item.get("bought", false)):
@@ -579,7 +576,7 @@ func _on_store_item_pressed(item_key: Variant) -> void:
 			return
 		_show_store_confirmation("Comprar %s por %s monedas" % [str(item.get("title", "artículo")), str(item.get("price", "0"))])
 	else:
-		var currency: Dictionary = TtpGuiApi.model.currency_items.get(item_key, {}) as Dictionary
+		var currency: Dictionary = TtpGuiApi.get_currency_products().get(item_key, {}) as Dictionary
 		_show_store_confirmation("Compra simulada: %s · %s" % [str(currency.get("title", "paquete")), str(currency.get("price", ""))])
 
 
@@ -596,14 +593,14 @@ func _show_store_confirmation(message: String) -> void:
 
 func _accept_store_operation() -> void:
 	if _pending_store_key is Array:
-		TtpGuiApi.update_item_sold_in_store_game(_pending_store_key as Array)
+		TtpGuiApi.purchase_item(_pending_store_key as Array)
 		_show_store()
 	else:
 		_iap.purchase(_pending_store_key)
 
 
 func _on_iap_purchased(product_key: Variant) -> void:
-	TtpGuiApi.add_coin_purchased(product_key)
+	TtpGuiApi.credit_currency_product(product_key)
 	_show_toast("Compra simulada completada")
 	_show_store()
 
@@ -643,7 +640,7 @@ func _show_win(payload: Dictionary) -> void:
 	stars.alignment = BoxContainer.ALIGNMENT_CENTER
 	_dialog_body.add_child(stars)
 	stars.update_modal(int(payload.get("stars", 0)))
-	_dialog_body.add_child(UI.label("Puntuación  %s\nRecompensa  +%s monedas" % [TtpGuiApi.model.format_number(payload.get("score", 0)), TtpGuiApi.model.format_number(payload.get("coins", 0))], 23, COLOR_INK, HORIZONTAL_ALIGNMENT_CENTER))
+	_dialog_body.add_child(UI.label("Puntuación  %s\nRecompensa  +%s monedas" % [TtpGuiApi.format_number(payload.get("score", 0)), TtpGuiApi.format_number(payload.get("coins", 0))], 23, COLOR_INK, HORIZONTAL_ALIGNMENT_CENTER))
 	var actions: HBoxContainer = HBoxContainer.new()
 	actions.name = "WinActions"
 	actions.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -671,14 +668,14 @@ func _show_lose(payload: Dictionary) -> void:
 
 func _retry_current_level() -> void:
 	if _result_payload.has("stars"):
-		TtpGuiApi.modal_win_retry_level(_current_level_key)
+		TtpGuiApi.retry_level(_current_level_key)
 	else:
-		TtpGuiApi.modal_lose_retry_level(_current_level_key)
+		TtpGuiApi.retry_level(_current_level_key)
 
 
 func _next_level() -> void:
-	var next_key: Variant = _result_payload.get("next_level", TtpGuiApi.get_next_level_to_play())
-	TtpGuiApi.load_level(next_key)
+	var next_key: Variant = _result_payload.get("next_level", TtpGuiApi.get_next_available_level())
+	TtpGuiApi.request_level_load(next_key)
 
 
 func _reward_win() -> void:
@@ -703,11 +700,11 @@ func _show_reward_wait(message: String, is_win: bool) -> void:
 	tween.tween_property(progress, "value", 1.0, 1.2)
 	await tween.finished
 	if is_win:
-		TtpGuiApi.notify_modal_win_video_reward(_current_level_key, int(_result_payload.get("coins", 0)))
+		TtpGuiApi.claim_reward_doubling(int(_result_payload.get("coins", 0)))
 		_show_toast("Monedas duplicadas")
 		_next_level()
 	else:
-		TtpGuiApi.notify_modal_lose_video_reward(_current_level_key)
+		TtpGuiApi.revive_after_reward(_current_level_key)
 
 
 func _show_pause() -> void:
@@ -727,7 +724,7 @@ func _resume_game() -> void:
 
 func _pause_to_home() -> void:
 	get_tree().paused = false
-	TtpGuiApi.select_pause()
+	TtpGuiApi.request_home_screen()
 
 
 func _begin_dialog(title_text: String) -> void:
@@ -766,6 +763,8 @@ func _on_screen_requested(screen_name: String, payload: Dictionary) -> void:
 		"store":
 			_show_store()
 		"config":
+			_show_config()
+		"settings":
 			_show_config()
 		"win":
 			_show_win(payload)
@@ -813,7 +812,7 @@ func _on_store_changed() -> void:
 
 
 func _update_coins(total: int) -> void:
-	var text_value: String = "MONEDAS  %s" % TtpGuiApi.model.format_number(total)
+	var text_value: String = "MONEDAS  %s" % TtpGuiApi.format_number(total)
 	if _coin_label != null:
 		_coin_label.text = text_value
 	if _game_coin_label != null:

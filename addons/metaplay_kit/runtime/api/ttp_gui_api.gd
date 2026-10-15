@@ -1,9 +1,31 @@
 extends Node
 
-## Public façade compatible with the functional contract documented in
-## interfaces/INT-85-TTP_GUI_API.md. Presentation stays in scene controllers;
-## this singleton owns orchestration and delegates state invariants to the model.
+## Public facade for host games. Callers configure data, issue game actions,
+## query read-only snapshots, and subscribe to events without accessing internals.
 
+signal level_load_started(level_data: Dictionary)
+signal level_load_completed()
+signal level_load_exit_animation_completed()
+signal loading_progress_changed(progress: float)
+signal navigation_requested(screen_name: String, payload: Dictionary)
+signal action_rejected(message: String)
+signal currency_balance_changed(total: int)
+signal play_requested()
+signal level_selected(level_data: Dictionary)
+signal level_retry_requested(level_data: Dictionary)
+signal next_level_load_requested(level_data: Dictionary)
+signal life_use_requested()
+signal revive_reward_claimed(level_data: Dictionary)
+signal reward_doubling_claimed(next_level: Dictionary, currency_balance: int)
+signal sfx_setting_changed(enabled: bool)
+signal music_setting_changed(enabled: bool)
+signal item_purchased(item_path: Array)
+signal item_equipped(item_path: Array)
+signal currency_product_credited(product_key: Variant)
+signal store_catalog_changed()
+
+# Legacy signals retained for existing integrations. New consumers should use
+# the semantic signals above.
 signal modal_lose_retry_button_pressed(level_data: Dictionary)
 signal modal_lose_use_life_pressed()
 signal modal_lose_video_reward_showed(level_data: Dictionary)
@@ -24,270 +46,475 @@ signal new_total_coins(total: int)
 signal screen_requested(screen_name: String, payload: Dictionary)
 signal operation_rejected(message: String)
 
+enum ItemType {
+	BASIC = 0,
+	EQUIP = 1,
+	PHASE = 2,
+}
+
+# Deprecated name retained for source compatibility.
 enum TYPES_BTN_ITEM {
 	BASIC = 0,
 	EQUIP = 1,
 	PHASE = 2,
 }
 
-var model: MetaPlayModel = MetaPlayModel.new()
-var resource_batch: ResourceBatch = ResourceBatch.new()
+var _model: MetaPlayModel = MetaPlayModel.new()
+var _resource_batch: ResourceBatch = ResourceBatch.new()
 var _loading_level: Dictionary = {}
 var _loading_path: String = ""
 
 
 func _ready() -> void:
-	model.coins_changed.connect(_on_coins_changed)
-	resource_batch.load_finished.connect(_on_batch_finished)
-	resource_batch.load_failed.connect(_on_batch_failed)
+	_model.coins_changed.connect(_on_coins_changed)
+	_model.store_changed.connect(_on_store_changed)
+	_resource_batch.load_finished.connect(_on_batch_finished)
+	_resource_batch.load_failed.connect(_on_batch_failed)
+	_resource_batch.stage_updated.connect(_on_loading_progress)
 
 
-func send_notification_ui(signal_name: String, parameter: Variant = null) -> void:
-	if not has_signal(signal_name):
-		operation_rejected.emit("Señal de interfaz desconocida: %s" % signal_name)
-		return
-	if parameter == null:
-		# lint:ignore godot3_api -- compatibility entry point intentionally receives a runtime signal name.
-		emit_signal(signal_name)
-	else:
-		# lint:ignore godot3_api -- compatibility entry point intentionally receives a runtime signal name.
-		emit_signal(signal_name, parameter)
+# Configuration commands.
+func configure_levels(levels: Dictionary) -> void:
+	_model.set_levels(levels)
 
 
-func set_levels(dictionary_levels: Dictionary) -> void:
-	model.set_levels(dictionary_levels)
+func configure_settings(settings: Dictionary) -> void:
+	_model.set_configuration(settings)
 
 
-func set_game_configuration(config: Dictionary) -> void:
-	model.set_configuration(config)
+func configure_currency_products(products: Dictionary) -> void:
+	_model.set_currency_items(products)
 
 
-func set_store_currency(items: Dictionary) -> void:
-	model.set_currency_items(items)
+func configure_items(items: Dictionary) -> void:
+	_model.set_game_items(items)
 
 
-func set_store_game(dictionary_items: Dictionary) -> void:
-	model.set_game_items(dictionary_items)
+func configure_currency_rewards(rewards: Dictionary) -> void:
+	_model.set_coin_values(rewards)
 
 
-func set_list_value_items_store_game(list_coins: Dictionary) -> void:
-	model.set_coin_values(list_coins)
+func set_currency_balance(amount: int) -> void:
+	_model.set_coins(amount)
 
 
-func set_player_coins(value: int) -> void:
-	model.set_coins(value)
+# Queries return copies so consumers cannot mutate kit-owned state accidentally.
+func get_level(level_key: Variant) -> Dictionary:
+	return _model.get_level(level_key)
 
 
-func load_first_level_to_play() -> Dictionary:
-	var level_key: Variant = model.get_next_level_to_play()
-	var level: Dictionary = model.get_level(level_key)
+func get_levels() -> Dictionary:
+	return _model.levels.duplicate(true)
+
+
+func get_enabled_level_keys() -> Array:
+	return _model.get_enabled_level_keys().duplicate()
+
+
+func get_next_available_level() -> Variant:
+	return _model.get_next_level_to_play()
+
+
+func get_settings() -> Dictionary:
+	return _model.configuration.duplicate(true)
+
+
+func get_currency_products() -> Dictionary:
+	return _model.currency_items.duplicate(true)
+
+
+func get_items() -> Dictionary:
+	return _model.game_items.duplicate(true)
+
+
+func get_item(item_path: Array) -> Dictionary:
+	return _model.get_store_item(item_path)
+
+
+func get_currency_balance() -> int:
+	return _model.coins
+
+
+func get_item_type_values() -> Dictionary:
+	return _model.get_type_buttons()
+
+
+func format_number(value: Variant) -> String:
+	return _model.format_number(value)
+
+
+func is_loading() -> bool:
+	return _resource_batch.is_loading()
+
+
+func get_loaded_resource(path: String) -> Resource:
+	return _resource_batch.get_resource(path)
+
+
+# Level and progression actions.
+func request_initial_level_load() -> Dictionary:
+	var level_key: Variant = get_next_available_level()
+	var level: Dictionary = get_level(level_key)
 	if not level.is_empty():
-		load_level(level_key)
+		request_level_load(level_key)
 	return level
 
 
-func load_level(level_key: Variant) -> void:
-	var level: Dictionary = model.get_level(level_key)
+func request_level_load(level_key: Variant) -> void:
+	var level: Dictionary = get_level(level_key)
 	if level.is_empty():
-		operation_rejected.emit("El nivel solicitado no existe.")
+		_reject("The requested level does not exist.")
 		return
 	_loading_level = level
 	_loading_level["key"] = level_key
 	_loading_path = str(level.get("scene_path", ""))
-	loading_started.emit(_loading_level.duplicate(true))
+	var level_data: Dictionary = _loading_level.duplicate(true)
+	level_load_started.emit(level_data)
+	loading_started.emit(level_data)
 	if _loading_path.is_empty():
 		call_deferred("_on_batch_finished")
 		return
-	resource_batch.add_resource_to_batch(_loading_path)
-	resource_batch.start_loading(24)
+	_resource_batch.add_resource_to_batch(_loading_path)
+	_resource_batch.start_loading(24)
 
 
-func level_win(
+func complete_level(
 		level_key: Variant,
-		_new_data_level: Dictionary,
-		quantity_stars: int,
+		stars: int,
 		score: int,
-		coins_earned: int,
-		next_level_to_play: Variant
+		reward_currency: int,
+		next_level_key: Variant = null
 	) -> void:
-	var result: Dictionary = model.complete_level(
-		level_key,
-		quantity_stars,
-		score,
-		coins_earned,
-		next_level_to_play
+	var result: Dictionary = _model.complete_level(
+		level_key, stars, score, reward_currency, next_level_key
 	)
 	if not bool(result.get("ok", false)):
-		operation_rejected.emit(str(result.get("message", "No se pudo registrar la victoria.")))
+		_reject(str(result.get("message", "Could not record level completion.")))
 		return
-	screen_requested.emit("win", {
+	_emit_navigation("win", {
 		"level_key": level_key,
-		"stars": clampi(quantity_stars, 0, 3),
+		"stars": clampi(stars, 0, 3),
 		"score": maxi(0, score),
-		"coins": maxi(0, coins_earned),
-		"next_level": next_level_to_play,
+		"coins": maxi(0, reward_currency),
+		"next_level": next_level_key,
 	})
 
 
-func modal_win_retry_level(level_key: Variant) -> void:
-	var level: Dictionary = model.get_level(level_key)
-	if level.is_empty():
-		return
-	modal_win_retry_button_pressed.emit(level)
-	load_level(level_key)
+func report_level_loss(level_key: Variant) -> void:
+	_emit_navigation("lose", {"level_key": level_key})
 
 
-func modal_win_next_level(_current_level_key: Variant) -> void:
-	var next_key: Variant = model.get_next_level_to_play()
-	var level: Dictionary = model.get_level(next_key)
+func retry_level(level_key: Variant) -> void:
+	var level: Dictionary = get_level(level_key)
 	if level.is_empty():
 		return
+	level_retry_requested.emit(level)
+	request_level_load(level_key)
+
+
+func load_next_level() -> void:
+	var next_key: Variant = get_next_available_level()
+	var level: Dictionary = get_level(next_key)
+	if level.is_empty():
+		return
+	next_level_load_requested.emit(level)
 	modal_win_load_next_level_pressed.emit(level)
-	load_level(next_key)
+	request_level_load(next_key)
 
 
-func level_lose(level_key: Variant) -> void:
-	screen_requested.emit("lose", {"level_key": level_key})
-
-
-func modal_lose_retry_level(level_key: Variant) -> void:
-	var level: Dictionary = model.get_level(level_key)
+func revive_after_reward(level_key: Variant) -> void:
+	var level: Dictionary = get_level(level_key)
 	if level.is_empty():
 		return
-	modal_lose_retry_button_pressed.emit(level)
-	load_level(level_key)
-
-
-func notify_modal_lose_video_reward(level_key: Variant) -> void:
-	var level: Dictionary = model.get_level(level_key)
-	if level.is_empty():
-		return
+	revive_reward_claimed.emit(level)
 	modal_lose_video_reward_showed.emit(level)
-	screen_requested.emit("game", {"level_key": level_key, "revived": true})
+	_emit_navigation("game", {"level_key": level_key, "revived": true})
 
 
-func notify_modal_lose_use_life() -> void:
+func claim_reward_doubling(extra_currency: int) -> void:
+	_model.add_coins(extra_currency)
+	var next_level: Dictionary = get_level(get_next_available_level())
+	reward_doubling_claimed.emit(next_level, _model.coins)
+	modal_win_video_reward_showed.emit([next_level, _model.coins])
+
+
+func use_life() -> void:
+	life_use_requested.emit()
 	modal_lose_use_life_pressed.emit()
 
 
-func notify_modal_win_video_reward(_level_key: Variant, extra_coins: int) -> void:
-	model.add_coins(extra_coins)
-	var next_key: Variant = model.get_next_level_to_play()
-	var next_level: Dictionary = model.get_level(next_key)
-	modal_win_video_reward_showed.emit([next_level, model.coins])
+# Navigation and settings actions.
+func request_home_screen() -> void:
+	_request_screen("home")
 
 
-func select_pause() -> void:
-	show_home()
+func request_level_selection_screen() -> void:
+	_request_screen("levels")
 
 
-func get_resource_loaded(path: String) -> Resource:
-	return resource_batch.get_resource(path)
+func request_store_screen() -> void:
+	_request_screen("store")
 
 
-func show_home() -> void:
-	screen_requested.emit("home", {})
+func request_settings_screen() -> void:
+	_request_screen("settings")
 
 
-func notify_change_sfx_status() -> void:
-	model.toggle_sfx()
+func start_or_resume_game() -> void:
+	play_requested.emit()
+	home_tap_to_play_pressed.emit()
+	var level_key: Variant = get_next_available_level()
+	if level_key != null:
+		request_level_load(level_key)
+
+
+func select_level(level_key: Variant) -> void:
+	var level: Dictionary = get_level(level_key)
+	if level.is_empty() or not bool(level.get("enabled", false)):
+		_reject("The selected level is locked or unavailable.")
+		return
+	level_selected.emit(level)
+	level_selector_load_new_level_selected.emit(level)
+	request_level_load(level_key)
+
+
+func toggle_sfx() -> void:
+	var enabled: bool = _model.toggle_sfx()
+	sfx_setting_changed.emit(enabled)
 	modal_config_change_sfx_status.emit()
 
 
-func notify_change_music_status() -> void:
-	model.toggle_music()
+func toggle_music() -> void:
+	var enabled: bool = _model.toggle_music()
+	music_setting_changed.emit(enabled)
 	modal_config_change_music_status.emit()
 
 
-func get_next_level_to_play() -> Variant:
-	return model.get_next_level_to_play()
-
-
-func tap_to_play_pressed() -> void:
-	home_tap_to_play_pressed.emit()
-	var level_key: Variant = model.get_next_level_to_play()
-	screen_requested.emit("game", {"level_key": level_key})
-
-
-func change_level(new_level: Variant) -> void:
-	var level: Dictionary = model.get_level(new_level)
-	if level.is_empty() or not bool(level.get("enabled", false)):
-		operation_rejected.emit("Ese nivel todavía está bloqueado.")
-		return
-	level_selector_load_new_level_selected.emit(level)
-	load_level(new_level)
-
-
-func show_level_selector_pressed(status: bool) -> void:
-	screen_requested.emit("levels" if status else "home", {})
-
-
-func show_panel_store(status: bool) -> void:
-	screen_requested.emit("store" if status else "home", {})
-
-
-func show_panel_config(status: bool) -> void:
-	screen_requested.emit("config" if status else "home", {})
-
-
-func get_item_in_store_game_dictionary(item_key: Array) -> Dictionary:
-	return model.get_store_item(item_key)
-
-
-func get_total_players_coins() -> int:
-	return model.coins
-
-
-func get_type_buttons() -> Dictionary:
-	return model.get_type_buttons()
-
-
-func update_item_game_loaded(item_key: Array) -> void:
-	var result: Dictionary = model.equip_item(item_key)
+func purchase_item(item_path: Array) -> void:
+	var result: Dictionary = _model.purchase_game_item(item_path)
 	if bool(result.get("ok", false)):
-		store_game_update_item_loadded.emit(item_key.duplicate())
+		var path_copy: Array = item_path.duplicate(true)
+		item_purchased.emit(path_copy)
+		store_game_buy_item.emit(path_copy)
 	else:
-		operation_rejected.emit(str(result.get("message", "No se pudo equipar.")))
+		_reject(str(result.get("message", "Could not purchase item.")))
 
 
-func update_item_sold_in_store_game(item_key: Array) -> void:
-	var result: Dictionary = model.purchase_game_item(item_key)
+func equip_item(item_path: Array) -> void:
+	var result: Dictionary = _model.equip_item(item_path)
 	if bool(result.get("ok", false)):
-		store_game_buy_item.emit(item_key.duplicate())
+		var path_copy: Array = item_path.duplicate(true)
+		item_equipped.emit(path_copy)
+		store_game_update_item_loadded.emit(path_copy)
 	else:
-		operation_rejected.emit(str(result.get("message", "No se pudo comprar.")))
+		_reject(str(result.get("message", "Could not equip item.")))
 
 
-func get_level(level_key: Variant) -> Dictionary:
-	return model.get_level(level_key)
-
-
-func add_coin_purchased(item: Variant) -> void:
-	var result: Dictionary = model.add_currency_product(item)
+func credit_currency_product(product_key: Variant) -> void:
+	var result: Dictionary = _model.add_currency_product(product_key)
 	if bool(result.get("ok", false)):
-		store_currency_buy_coins.emit(item)
+		currency_product_credited.emit(product_key)
+		store_currency_buy_coins.emit(product_key)
 	else:
-		operation_rejected.emit(str(result.get("message", "No se pudo acreditar la compra.")))
+		_reject(str(result.get("message", "Could not credit currency product.")))
 
 
-func manage_tap_background() -> void:
-	pass
+func _request_screen(screen_name: String) -> void:
+	_emit_navigation(screen_name, {})
+
+
+func _emit_navigation(screen_name: String, payload: Dictionary) -> void:
+	var safe_payload: Dictionary = payload.duplicate(true)
+	navigation_requested.emit(screen_name, safe_payload)
+	screen_requested.emit(screen_name, safe_payload)
+
+
+func _reject(message: String) -> void:
+	action_rejected.emit(message)
+	operation_rejected.emit(message)
 
 
 func _on_coins_changed(total: int) -> void:
+	currency_balance_changed.emit(total)
 	new_total_coins.emit(total)
 
 
+func _on_store_changed() -> void:
+	store_catalog_changed.emit()
+
+
+func _on_loading_progress(progress: float) -> void:
+	loading_progress_changed.emit(progress)
+
+
 func _on_batch_finished() -> void:
-	# The stage must instantiate the loaded scene before presenting gameplay.
+	level_load_completed.emit()
 	loading_completed.emit()
 	call_deferred("_emit_loading_exit")
 
 
 func _emit_loading_exit() -> void:
+	level_load_exit_animation_completed.emit()
 	loading_exit_animation_completed.emit()
 
 
 func _on_batch_failed(_path: String, message: String) -> void:
-	operation_rejected.emit(message)
-	screen_requested.emit("home", {})
+	_reject(message)
+	_request_screen("home")
+
+
+# Deprecated compatibility wrappers for the original TtpGuiApi names.
+func set_levels(value: Dictionary) -> void:
+	configure_levels(value)
+
+
+func set_game_configuration(value: Dictionary) -> void:
+	configure_settings(value)
+
+
+func set_store_currency(value: Dictionary) -> void:
+	configure_currency_products(value)
+
+
+func set_store_game(value: Dictionary) -> void:
+	configure_items(value)
+
+
+func set_list_value_items_store_game(value: Dictionary) -> void:
+	configure_currency_rewards(value)
+
+
+func set_player_coins(value: int) -> void:
+	set_currency_balance(value)
+
+
+func load_first_level_to_play() -> Dictionary:
+	return request_initial_level_load()
+
+
+func load_level(level_key: Variant) -> void:
+	request_level_load(level_key)
+
+
+func level_win(level_key: Variant, _data: Dictionary, stars: int, score: int, coins: int, next_key: Variant) -> void:
+	complete_level(level_key, stars, score, coins, next_key)
+
+
+func level_lose(level_key: Variant) -> void:
+	report_level_loss(level_key)
+
+
+func modal_win_retry_level(level_key: Variant) -> void:
+	var level: Dictionary = get_level(level_key)
+	if level.is_empty():
+		return
+	modal_win_retry_button_pressed.emit(level)
+	retry_level(level_key)
+
+
+func modal_lose_retry_level(level_key: Variant) -> void:
+	var level: Dictionary = get_level(level_key)
+	if level.is_empty():
+		return
+	modal_lose_retry_button_pressed.emit(level)
+	retry_level(level_key)
+
+
+func modal_win_next_level(_current_level_key: Variant) -> void:
+	load_next_level()
+
+
+func notify_modal_lose_video_reward(level_key: Variant) -> void:
+	revive_after_reward(level_key)
+
+
+func notify_modal_lose_use_life() -> void:
+	use_life()
+
+
+func notify_modal_win_video_reward(_level_key: Variant, extra_coins: int) -> void:
+	claim_reward_doubling(extra_coins)
+
+
+func select_pause() -> void:
+	request_home_screen()
+
+
+func get_resource_loaded(path: String) -> Resource:
+	return get_loaded_resource(path)
+
+
+func show_home() -> void:
+	request_home_screen()
+
+
+func notify_change_sfx_status() -> void:
+	toggle_sfx()
+
+
+func notify_change_music_status() -> void:
+	toggle_music()
+
+
+func get_next_level_to_play() -> Variant:
+	return get_next_available_level()
+
+
+func tap_to_play_pressed() -> void:
+	start_or_resume_game()
+
+
+func change_level(level_key: Variant) -> void:
+	select_level(level_key)
+
+
+func show_level_selector_pressed(status: bool) -> void:
+	_request_screen("levels" if status else "home")
+
+
+func show_panel_store(status: bool) -> void:
+	_request_screen("store" if status else "home")
+
+
+func show_panel_config(status: bool) -> void:
+	_request_screen("config" if status else "home")
+
+
+func get_item_in_store_game_dictionary(item_path: Array) -> Dictionary:
+	return get_item(item_path)
+
+
+func get_total_players_coins() -> int:
+	return get_currency_balance()
+
+
+func get_type_buttons() -> Dictionary:
+	return get_item_type_values()
+
+
+func update_item_game_loaded(item_path: Array) -> void:
+	equip_item(item_path)
+
+
+func update_item_sold_in_store_game(item_path: Array) -> void:
+	purchase_item(item_path)
+
+
+func add_coin_purchased(product_key: Variant) -> void:
+	credit_currency_product(product_key)
+
+
+func send_notification_ui(signal_name: String, parameter: Variant = null) -> void:
+	if not has_signal(signal_name):
+		_reject("Unknown UI signal: %s" % signal_name)
+		return
+	if parameter == null:
+		# lint:ignore godot3_api -- deprecated compatibility method accepts a dynamic signal name.
+		emit_signal(signal_name)
+	else:
+		# lint:ignore godot3_api -- deprecated compatibility method accepts a dynamic signal name.
+		emit_signal(signal_name, parameter)
+
+
+func manage_tap_background() -> void:
+	pass

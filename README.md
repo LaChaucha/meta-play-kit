@@ -1,195 +1,167 @@
-# MetaPlayKit
+﻿# MetaPlayKit
 
-MetaPlayKit is a reusable Godot 4.7 meta-game kit with a sample game that shows how to integrate it. The kit provides a public API, progression and store rules, asynchronous resource loading, reusable UI components, a theme, and UI assets. The demo project is the example consumer; its level gameplay and screens are sample implementations.
+MetaPlayKit is a reusable Godot 4.7 meta-game addon with a sample consumer project. It provides a public `TtpGuiApi` facade, progression and store rules, asynchronous level-resource loading, reusable UI components, a theme, and UI assets. The `demo/` directory contains example screens and sample gameplay; consuming games provide their own presentation and level scenes.
 
 ## Run the demo
 
-Open the repository root's `project.godot` in Godot 4.7 and run the main scene. The demo uses a 1280 × 720 logical viewport with `canvas_items` stretching.
+Open the repository root's `project.godot` in Godot 4.7 and run the main scene. The project uses a 1280 × 720 logical viewport with `canvas_items` stretching.
 
 ## Repository layout
 
 | Path | Purpose |
 | --- | --- |
-| `addons/metaplay_kit/plugin.cfg` and `plugin.gd` | Godot editor plugin. Enabling it registers the `TtpGuiApi` autoload in a consuming project. |
-| `addons/metaplay_kit/runtime/api/` | Public runtime facade and signals. |
-| `addons/metaplay_kit/runtime/model/` | Level progression, currency, configuration, and store rules. |
+| `addons/metaplay_kit/plugin.cfg` and `plugin.gd` | Editor plugin; enabling it registers the `TtpGuiApi` autoload. |
+| `addons/metaplay_kit/runtime/api/` | Public facade, commands, queries, and signals. |
+| `addons/metaplay_kit/runtime/model/` | Progression, wallet, settings, and store rules. |
 | `addons/metaplay_kit/runtime/systems/` | Asynchronous resource loading. |
-| `addons/metaplay_kit/runtime/components/` | Reusable blocking background, draggable list, star rating, and store-item controls. |
-| `addons/metaplay_kit/runtime/ui/` | UI factory and loading overlay. |
-| `addons/metaplay_kit/runtime/platform/` | Optional platform purchase adapter with a desktop mock. |
+| `addons/metaplay_kit/runtime/components/`, `ui/` | Reusable UI controls and loading presentation. |
+| `addons/metaplay_kit/runtime/platform/` | Optional platform purchase adapter and desktop mock. |
 | `addons/metaplay_kit/assets/` | Reusable theme and UI art. |
-| `demo/scenes/` and `demo/scripts/` | Demo app and sample level. This is example integration code, not required runtime kit content. |
-| `demo/assets/` and `demo/tools/` | Demo-only art and the legacy asset extraction utility. |
-| `tests/` and `scenarios/` | Domain/loading tests and repeatable UI-flow scenarios. |
-| `interfaces/` | Archived Godot 3 source material; not part of the runtime. |
+| `demo/scenes/`, `demo/scripts/` | Sample consumer app and level; not required by the addon runtime. |
+| `tests/`, `scenarios/` | Domain/loading tests and repeatable demo flows. |
+| `interfaces/` | Archived Godot 3 reference material; not part of the runtime. |
 
-The repository root remains the development and demo Godot project. A consuming game only needs the `addons/metaplay_kit/` directory and its own project configuration and game content.
+A consuming game needs `addons/metaplay_kit/`, its own game content, and the autoload/plugin setup described below.
 
-## Install the kit in another game
+## Install
 
-1. Copy `addons/metaplay_kit/` into the consuming game's `addons/` directory.
-2. Open the project in Godot and let it import the addon.
-3. In **Project → Project Settings → Plugins**, enable **MetaPlayKit**. The plugin registers the `TtpGuiApi` autoload. If the project already has an autoload with that name, resolve the name/path conflict before enabling the plugin.
-4. Optionally apply the kit theme by setting `gui/theme/custom` to `res://addons/metaplay_kit/assets/theme/metaplay.tres`. The demo enables this theme in its own `project.godot`; the plugin does not replace a game's theme automatically.
+1. Copy `addons/metaplay_kit/` into the consuming project's `addons/` directory.
+2. Open the project in Godot and allow it to import the addon.
+3. In **Project > Project Settings > Plugins**, enable **MetaPlayKit**. The plugin registers the `TtpGuiApi` autoload. Resolve any existing autoload name/path conflict first.
+4. Optionally set `gui/theme/custom` to `res://addons/metaplay_kit/assets/theme/metaplay.tres`. The plugin does not replace the host game's theme automatically.
 
-The demo configures the autoload and theme directly in its `project.godot` and enables the editor plugin. The plugin detects the existing matching autoload and avoids registering a duplicate. This also provides a reference for projects that manage the autoload themselves.
+## Public API
 
-## Host-game integration
+`TtpGuiApi` is the host game's facade. Use configuration methods before starting a session, action methods to request changes, read methods for UI projections, and signals to react to results. The facade returns deep copies of catalog, settings, and level data so callers do not mutate kit state through query results. The model and resource loader are implementation details and are not exposed as public properties.
 
-### Configure the session
-
-`TtpGuiApi` is the public autoload implemented in `addons/metaplay_kit/runtime/api/ttp_gui_api.gd`. Register levels and initial session state before requesting a load:
+### Configure a session
 
 ```gdscript
-TtpGuiApi.set_levels({
-	"level1": {
-		"name": "Forest",
-		"max_score": 0,
-		"max_stars": 0,
-		"scene_path": "res://demo/scenes/level_stub.tscn",
-		"enabled": true,
-	},
-	"level2": {
-		"name": "Cave",
-		"max_score": 0,
-		"max_stars": 0,
-		"scene_path": "res://demo/scenes/level_stub.tscn",
-		"enabled": false,
-	},
+TtpGuiApi.configure_levels({
+    "forest": {
+        "name": "Forest",
+        "max_score": 0,
+        "max_stars": 0,
+        "scene_path": "res://levels/forest.tscn",
+        "enabled": true,
+    },
+    "cave": {
+        "name": "Cave",
+        "max_score": 0,
+        "max_stars": 0,
+        "scene_path": "res://levels/cave.tscn",
+        "enabled": false,
+    },
 })
-TtpGuiApi.set_player_coins(250)
-TtpGuiApi.set_game_configuration({"sfx": true, "music": true})
+TtpGuiApi.configure_settings({"sfx": true, "music": true})
+TtpGuiApi.configure_items(item_catalog)
+TtpGuiApi.configure_currency_products(currency_products)
+TtpGuiApi.configure_currency_rewards({"small_pack": 500, "large_pack": 2500})
+TtpGuiApi.set_currency_balance(250)
 ```
 
-Each level entry uses `name`, `max_score`, `max_stars`, `scene_path`, and `enabled`. Replace the sample scene paths with scenes from the consuming game. `load_first_level_to_play()` chooses the next playable level, starts loading it, and returns its registered definition. Use `get_level(key)` and `get_next_level_to_play()` to query progression.
+A level entry uses `name`, `max_score`, `max_stars`, `scene_path`, and `enabled`. Item catalogs support basic, equippable, and phased entries; phased entries are addressed by paths such as `["power_boost", "phase1"]`. Currency reward values map product keys to the balance granted when credited.
 
-### Load and start the host's level
+### Commands and queries
 
-Connect to the loading signals before requesting the first level. `loading_started(level_data)` sends a deep copy of the level definition with its key added under `key`. `loading_completed()` fires after loading finishes. The host must retrieve and instantiate the `PackedScene`, attach the resulting node, and start its gameplay lifecycle. `get_resource_loaded(path)` consumes the ready resource for that path; an immediate second read returns `null`.
+| Purpose | Public methods |
+| --- | --- |
+| Configure session data | `configure_levels`, `configure_settings`, `configure_items`, `configure_currency_products`, `configure_currency_rewards`, `set_currency_balance` |
+| Load and progress | `request_initial_level_load`, `request_level_load(key)`, `select_level(key)`, `complete_level(key, stars, score, reward_currency, next_level_key)`, `report_level_loss(key)`, `retry_level(key)`, `load_next_level()` |
+| Store and wallet | `purchase_item(path)`, `equip_item(path)`, `credit_currency_product(product_key)` |
+| Settings and rewards | `toggle_sfx`, `toggle_music`, `revive_after_reward(key)`, `claim_reward_doubling(extra_currency)`, `use_life()` |
+| Navigation | `request_home_screen`, `request_level_selection_screen`, `request_store_screen`, `request_settings_screen`, `start_or_resume_game` |
+| Read level/session state | `get_level(key)`, `get_levels`, `get_enabled_level_keys`, `get_next_available_level` |
+| Read store/settings state | `get_settings`, `get_items`, `get_item(path)`, `get_currency_products`, `get_currency_balance`, `get_item_type_values` |
+| Loading/presentation helpers | `get_loaded_resource(path)`, `is_loading`, `format_number(value)` |
 
-This example shows the integration points. The consuming game supplies the level container and can replace the loading and error presentation to fit its own UI:
+`start_or_resume_game()` requests loading of the next available level. Gameplay is presented by the host after the load completes and a valid level instance is created. `request_level_load()` may load a configured level directly; `select_level()` additionally rejects locked levels. `complete_level()` records progress and requests the `win` screen. The host owns stopping/pausing its gameplay node and deciding how to persist session state.
+
+### Loading integration
+
+Connect before requesting the initial level. The host receives the level definition (including `key`) at `level_load_started`, then retrieves the ready resource after `level_load_completed`. `get_loaded_resource(path)` consumes the ready resource, so a second immediate read returns `null`.
 
 ```gdscript
 extends Node
 
-@export var level_container_path: NodePath
-
-var _level_container: Node = null
-var _pending_scene_path: String = ""
-var _pending_level_key: Variant = null
-var _current_level: Node = null
-
+var _pending_path: String = ""
+var _pending_key: Variant = null
 
 func _ready() -> void:
-	_level_container = get_node(level_container_path)
-	TtpGuiApi.loading_started.connect(_on_loading_started)
-	TtpGuiApi.loading_completed.connect(_on_loading_completed)
-	TtpGuiApi.operation_rejected.connect(_on_operation_rejected)
-	TtpGuiApi.set_levels({
-		"level1": {
-			"name": "Forest",
-			"max_score": 0,
-			"max_stars": 0,
-			"scene_path": "res://demo/scenes/level_stub.tscn",
-			"enabled": true,
-		},
-	})
-	TtpGuiApi.load_first_level_to_play()
+    TtpGuiApi.level_load_started.connect(_on_level_load_started)
+    TtpGuiApi.level_load_completed.connect(_on_level_load_completed)
+    TtpGuiApi.action_rejected.connect(_on_action_rejected)
+    TtpGuiApi.configure_levels({
+        "forest": {
+            "name": "Forest",
+            "max_score": 0,
+            "max_stars": 0,
+            "scene_path": "res://levels/forest.tscn",
+            "enabled": true,
+        },
+    })
+    TtpGuiApi.request_initial_level_load()
 
+func _on_level_load_started(level_data: Dictionary) -> void:
+    _pending_path = str(level_data.get("scene_path", ""))
+    _pending_key = level_data.get("key")
+    # Show the host game's loading UI.
 
-func _on_loading_started(level_data: Dictionary) -> void:
-	_pending_scene_path = str(level_data.get("scene_path", ""))
-	_pending_level_key = level_data.get("key")
-	# Show the host game's loading UI here.
+func _on_level_load_completed() -> void:
+    var packed_scene: PackedScene = TtpGuiApi.get_loaded_resource(_pending_path) as PackedScene
+    if packed_scene == null:
+        TtpGuiApi.request_home_screen()
+        return
+    var level: Node = packed_scene.instantiate()
+    add_child(level)
+    if level.has_method("configure"):
+        level.call("configure", _pending_key, self)
+    if level.has_method("start_level"):
+        level.call("start_level")
+    # Replace the current level and present gameplay in the host UI.
 
-
-func _on_loading_completed() -> void:
-	var packed_scene: PackedScene = TtpGuiApi.get_resource_loaded(
-		_pending_scene_path
-	) as PackedScene
-	if packed_scene == null or not is_instance_valid(_level_container):
-		TtpGuiApi.show_home()
-		return
-
-	var new_level: Node = packed_scene.instantiate()
-	if is_instance_valid(_current_level):
-		if _current_level.has_method("stop_level"):
-			_current_level.call("stop_level")
-		_current_level.queue_free()
-	_level_container.add_child(new_level)
-	_current_level = new_level
-	if new_level.has_method("configure"):
-		new_level.call("configure", _pending_level_key, self)
-	if new_level.has_method("start_level"):
-		new_level.call("start_level")
-	# Hide the loading UI and present the game here.
-
-
-func _on_operation_rejected(message: String) -> void:
-	push_warning(message)
+func _on_action_rejected(message: String) -> void:
+    push_warning(message)
 ```
 
-`configure(key, host)`, `start_level()`, `stop_level()`, and `revive()` are optional conventions implemented by the demo level in `demo/scripts/level.gd`; the kit does not require those methods on a host scene. On a resource-load failure, the facade emits `operation_rejected` and requests the `home` screen with `screen_requested`.
+The methods `configure(key, host)`, `start_level()`, `stop_level()`, and `revive()` are conventions demonstrated by `demo/scripts/level.gd`, not requirements imposed on host scenes. Connect `loading_progress_changed(progress)` to the host's progress UI if desired. A failed load emits `action_rejected` and requests the home screen.
 
-### Report a game result
-
-Stop the host level and report wins through the facade:
+### Report gameplay results
 
 ```gdscript
-TtpGuiApi.level_win(
-	level_key,
-	TtpGuiApi.get_level(level_key),
-	3,                 # stars, clamped to 0..3
-	1250,              # score
-	120,               # coins earned
-	"level2"           # registered level to unlock, if it exists
-)
+TtpGuiApi.complete_level("forest", 3, 1250, 120, "cave")
+TtpGuiApi.report_level_loss("forest")
 ```
 
-The model records the best score and star count, credits the reward, and enables the registered key passed as `next_level_to_play`. The facade then emits `screen_requested("win", payload)`. The second argument (`level_data`) remains for compatibility; the current model looks up the registered level using `level_key`.
-
-For a loss, call `TtpGuiApi.level_lose(level_key)`. It requests the `lose` screen; the host remains responsible for stopping or pausing its gameplay node. Other available actions include `load_level(key)`, `change_level(key)` (enabled levels only), `modal_win_retry_level(key)`, `modal_lose_retry_level(key)`, and `modal_win_next_level(current_key)`. The last method chooses the next level from the model's progression state.
-
-Navigation requests include `show_home()`, `show_level_selector_pressed(true)`, `show_panel_store(true)`, `show_panel_config(true)`, and `tap_to_play_pressed()`. The `screen_requested(screen_name, payload)` signal uses `home`, `game`, `levels`, `store`, `config`, `win`, and `lose` as screen names.
+The level-completion call records best stars and score, grants the configured session currency reward, and enables `next_level_key` if it is registered. The host decides when to stop or pause its gameplay node before reporting a result.
 
 ### Signals
 
 | Signal | Meaning |
 | --- | --- |
-| `loading_started(level_data)` | A level load begins; data includes `key` and `scene_path`. |
-| `loading_completed()` | The resource has loaded and can be retrieved by the host. |
-| `loading_exit_animation_completed()` | The loading overlay can finish its exit transition. |
-| `screen_requested(screen_name, payload)` | The facade requests a screen. |
-| `operation_rejected(message)` | An operation was rejected or a load failed. |
-| `new_total_coins(total)` | The wallet balance changed. |
-| `home_tap_to_play_pressed()` | Play was requested from the home screen. |
-| `level_selector_load_new_level_selected(level_data)` | A level was selected from the level selector. |
-| `modal_win_retry_button_pressed(level_data)` / `modal_lose_retry_button_pressed(level_data)` | Retry was requested from a result screen. |
-| `modal_win_load_next_level_pressed(level_data)` | Next-level loading was requested from a win screen. |
-| `modal_lose_use_life_pressed()` | A life-use action was requested; the host handles its effect. |
-| `modal_lose_video_reward_showed(level_data)` / `modal_win_video_reward_showed(information)` | A simulated video reward was reported. |
-| `modal_config_change_sfx_status()` / `modal_config_change_music_status()` | The matching audio setting changed. |
-| `store_game_buy_item(item_key)` / `store_game_update_item_loadded(item_key)` | A store item was purchased or equipped successfully. |
-| `store_currency_buy_coins(product_key)` | A configured currency product was credited. |
+| `level_load_started(level_data)` / `level_load_completed()` | A level load started / its resource became ready. |
+| `loading_progress_changed(progress)` / `level_load_exit_animation_completed()` | Loading progress and completion of the demo-compatible exit transition. |
+| `navigation_requested(screen_name, payload)` | A screen transition is requested (`home`, `game`, `levels`, `store`, `settings`, `win`, or `lose`). |
+| `action_rejected(message)` | A requested action or load could not be completed. |
+| `currency_balance_changed(total)` / `store_catalog_changed()` | Wallet or item catalog changed. |
+| `play_requested()` / `level_selected(level_data)` | The player requested play or selected an enabled level. |
+| `level_retry_requested(level_data)` / `next_level_load_requested(level_data)` | Retry or progression action was requested. |
+| `life_use_requested()` / `revive_reward_claimed(level_data)` / `reward_doubling_claimed(next_level, balance)` | Reward-related actions; ad presentation/provider integration belongs to the host. |
+| `sfx_setting_changed(enabled)` / `music_setting_changed(enabled)` | A setting toggled; connect these to the host audio system. |
+| `item_purchased(path)` / `item_equipped(path)` / `currency_product_credited(product_key)` | A store action succeeded. |
 
-Legacy names, including `store_game_update_item_loadded`, are retained for compatibility. In `modal_win_video_reward_showed(information)`, the array contains the next level and updated coin balance. `send_notification_ui(signal_name, parameter)` emits a facade signal by name; callers must pass the argument count and types declared by that signal. `select_pause()` currently requests `home`; `manage_tap_background()` is a placeholder.
+## Compatibility
 
-### Stores, settings, and rewards
-
-- `set_store_game(catalog)` configures game items. Entries use `type` (0 basic, 1 equippable, 2 phased), `title`, `description`, `price`, and `bought`. Equippable entries also use `load` and `group`. Phased items are nested under `stages` and addressed with paths such as `["power_boost", "phase1"]`.
-- `update_item_sold_in_store_game(path)` attempts a purchase after validating its price and the wallet. `update_item_game_loaded(path)` equips an owned item. Use `get_item_in_store_game_dictionary(path)` to query its definition and `get_type_buttons()` to get the item-type values.
-- `set_store_currency(products)` configures offers; `set_list_value_items_store_game(amounts)` maps each product key to the amount of coins it grants. `add_coin_purchased(key)` credits that configured amount. `get_total_players_coins()` returns the current balance.
-- `set_game_configuration(config)` sets initial values. `notify_change_sfx_status()` and `notify_change_music_status()` toggle them and emit signals; connect those signals to the host game's audio system.
-- `notify_modal_lose_video_reward(key)` and `notify_modal_win_video_reward(key, extra_coins)` report simulated video rewards. `notify_modal_lose_use_life()` only emits a signal; the host decides how to spend a life.
+The original `TtpGuiApi` method and signal names remain as deprecated compatibility wrappers/signals for existing integrations. New host code should use the semantic API above. Signals with a direct replacement are emitted alongside their new equivalents; do not connect to both for the same event. Result-modal-specific legacy signals are emitted when their matching legacy wrapper is called. `send_notification_ui()` and `manage_tap_background()` remain only for old integrations and should not be used in new code. The old `TYPES_BTN_ITEM` enum is retained as a deprecated alias for `ItemType`.
 
 ## Current limitations
 
-The model and API do not persist data or connect a backend. Progress, wallet balance, settings, purchases, and equipped items live in memory for the session. `add_coin_purchased()` credits the configured amount for a product key; it does not validate a store receipt. The demo's desktop IAP adapter is a simulation. A shipped game must integrate and validate purchases with its platform provider and decide how to persist player progress.
+The kit has no backend or persistent save system. Progress, wallet, settings, purchases, and equipped items live in memory for the session. `credit_currency_product()` credits the configured amount for a product key; it does not validate a store receipt. The demo's desktop IAP adapter is a simulation. A shipped game must validate purchases with its platform provider and decide how to persist player progress.
 
 ## Legacy reference material
 
-Visual assets used by the demo were extracted from `interfaces/testAddons` with `demo/tools/extract_legacy_assets.py`. The archived folder remains available as reference material; `interfaces/.gdignore` prevents Godot from importing the old Godot 3 project.
+Visual assets used by the demo were extracted from `interfaces/testAddons` with `demo/tools/extract_legacy_assets.py`. The archived folder remains available for reference; `interfaces/.gdignore` prevents Godot from importing the old Godot 3 project.
 
 ## Verification
 
-The tests in `tests/` cover model invariants and repeated/invalid level loading. JSON files in `scenarios/` exercise the app with inputs and check layout, navigation, purchases, wins, losses, rewards, settings, and pause flows.
+`tests/` covers model invariants and repeated/invalid level loading. JSON files in `scenarios/` exercise the demo's navigation, purchases, results, rewards, settings, and pause flows.

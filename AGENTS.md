@@ -43,7 +43,7 @@ El orden en `MetaPlayDemoStage._ready()` es deliberado:
 3. Construye la UI y obtiene referencias a pantallas, overlay, diálogo y etiquetas.
 4. Conecta señales de `TtpGuiApi`, el modelo, la carga y el adaptador IAP.
 5. Registra datos de demostración: seis niveles, saldo inicial, configuración, productos de moneda y catálogo de artículos.
-6. Muestra el overlay y llama `TtpGuiApi.load_first_level_to_play()`.
+6. Muestra el overlay y llama `TtpGuiApi.request_initial_level_load()`.
 
 El primer nivel se carga e instancia, pero el primer arranque termina en inicio; no se entra directamente a la partida. Desde inicio, “Jugar” abre el nivel siguiente disponible. Los seis niveles de demostración apuntan a `level_stub.tscn`, pero conservan claves y datos de progreso distintos.
 
@@ -51,7 +51,7 @@ El primer nivel se carga e instancia, pero el primer arranque termina en inicio;
 
 La carga tiene una clave activa y una clave pendiente. `MetaPlayDemoStage._loading_level_key` identifica el destino que se está cargando; `_current_level_key` sólo cambia cuando el recurso se instancia correctamente.
 
-1. La UI solicita `TtpGuiApi.load_level(key)` o una acción de fachada equivalente.
+1. La UI solicita `TtpGuiApi.request_level_load(key)` o una acción de fachada equivalente.
 2. La fachada busca el nivel en el modelo, copia su definición y añade `key` al diccionario enviado a `loading_started`.
 3. El stage guarda la clave pendiente, despausa el árbol, detiene el nivel actual, oculta el juego y muestra el overlay.
 4. `ResourceBatch` solicita el recurso con `ResourceLoader.load_threaded_request`, actualiza progreso y obtiene el `Resource` cuando termina.
@@ -61,17 +61,17 @@ La carga tiene una clave activa y una clave pendiente. `MetaPlayDemoStage._loadi
 8. Si la instancia falla, el stage muestra un aviso y vuelve a inicio sin presentar una partida falsa ni cambiar la clave activa.
 9. El overlay completa su animación y el stage muestra inicio en el primer arranque o la pantalla de juego en cargas posteriores.
 
-`ResourceBatch.get_resource(path)` consume la entrada lista de esa ruta: una segunda lectura inmediata devuelve `null`. Cada nueva carga debe volver a registrar la ruta con `add_resource_to_batch()` y llamar `start_loading()`. Ante error, `load_failed` llega a la fachada, que emite `operation_rejected` y solicita volver a inicio.
+`ResourceBatch.get_resource(path)` consume la entrada lista de esa ruta: una segunda lectura inmediata devuelve `null`. Cada nueva carga debe volver a registrar la ruta con `add_resource_to_batch()` y llamar `start_loading()`. Ante error, `load_failed` llega a la fachada, que emite `action_rejected` y solicita volver a inicio.
 
 ## Flujo de juego, resultados y progresión
 
 El nivel de prueba no implementa gameplay real; sus botones simulan los callbacks del juego anfitrión. `MetaPlayDemoLevel` sólo admite victoria/derrota mientras `active == true`. Al completar una, detiene el nivel y llama al stage.
 
-- **Victoria:** el stage llama `TtpGuiApi.level_win(...)`; el modelo valida la clave, actualiza estrellas/puntuación, acredita monedas y desbloquea el siguiente nivel. La fachada emite `screen_requested("win", payload)` y el stage muestra estrellas, puntuación y recompensa.
+- **Victoria:** el stage llama `TtpGuiApi.complete_level(...)`; el modelo valida la clave, actualiza estrellas/puntuación, acredita monedas y desbloquea el siguiente nivel. La fachada emite `navigation_requested("win", payload)` y el stage muestra estrellas, puntuación y recompensa.
 - **Repetir:** la clave actual se carga de nuevo; el nivel anterior se detiene y se crea una instancia nueva.
 - **Duplicar recompensa:** una espera visual simula el anuncio; se agregan monedas extra y se solicita cargar el siguiente nivel disponible.
 - **Siguiente:** carga el nivel indicado por el resultado/progresión. La validación de carga asegura que la partida sólo se muestre tras una instancia válida.
-- **Derrota:** `level_lose` detiene el nivel y presenta opciones de repetir, reanimar o volver a inicio. La derrota no elimina el nivel ni cambia su desbloqueo.
+- **Derrota:** `report_level_loss` detiene el nivel y presenta opciones de repetir, reanimar o volver a inicio. La derrota no elimina el nivel ni cambia su desbloqueo.
 - **Reanimar:** la recompensa simulada llama a `revive_level`; el nivel actual vuelve a activo y se cierra el resultado.
 - **Pausa:** la acción `pause` o Escape abre el diálogo y pausa el árbol. Continuar reanuda; volver a inicio despausa y muestra inicio.
 
@@ -83,11 +83,11 @@ El nivel de prueba no implementa gameplay real; sus botones simulan los callback
 - **Tienda de moneda:** aceptar una oferta llama al adaptador IAP; en escritorio éste emite una compra simulada y el modelo acredita la cantidad configurada para ese producto.
 - **Configuración:** alterna SFX y música en el modelo y refleja el estado en la UI. Es persistencia sólo en memoria.
 - **Promoción/enlaces:** la vista de video es una previsualización local; los enlaces a términos, valoración o promoción se abren con `OS.shell_open` tras pulsar el botón correspondiente.
-- **Notificaciones:** `operation_rejected` muestra mensajes breves; `new_total_coins` actualiza los saldos visibles.
+- **Notificaciones:** `action_rejected` muestra mensajes breves; `currency_balance_changed` actualiza los saldos visibles.
 
 ## Contrato de señales
 
-`TtpGuiApi` es el punto de entrada para consumidores. El stage escucha, entre otras, `screen_requested`, `loading_started`, `loading_completed`, `loading_exit_animation_completed`, `operation_rejected`, `new_total_coins`, señales de tienda/configuración y recompensas. La fachada delega invariantes al modelo y emite señales de compatibilidad para el contrato descrito en `interfaces/INT-85-TTP_GUI_API.md`.
+`TtpGuiApi` es el punto de entrada para consumidores. El stage escucha `navigation_requested`, `level_load_started`, `level_load_completed`, `level_load_exit_animation_completed`, `loading_progress_changed`, `action_rejected`, `currency_balance_changed`, `store_catalog_changed` y señales de configuración/recompensas. El modelo y el cargador son detalles internos; los consumidores usan consultas de la fachada para obtener copias de los datos. Los nombres legacy se conservan como wrappers/señales de compatibilidad para el contrato de `interfaces/INT-85-TTP_GUI_API.md`.
 
 Usa métodos de la fachada en lugar de modificar directamente campos del modelo desde componentes nuevos. La excepción actual es la UI de demo, que lee algunos datos de catálogo/configuración para presentarlos; las mutaciones pasan por métodos del modelo/fachada.
 
@@ -95,7 +95,7 @@ Usa métodos de la fachada en lugar de modificar directamente campos del modelo 
 
 Las claves configuradas por `MetaPlayDemoStage._configure_demo_data()` son `level1` a `level6`. Cada definición de nivel usa `name`, `max_score`, `max_stars`, `scene_path` y `enabled`. El primer nivel inicia habilitado; completar un nivel actualiza sus récords y habilita la progresión siguiente.
 
-El catálogo de artículos usa claves superiores de producto y, en productos por fases, rutas tipo `["power_boost", "phase1"]`. Conserva esa forma al consultar, comprar o equipar artículos anidados. Los productos monetarios se relacionan con sus cantidades mediante `set_list_value_items_store_game()`.
+El catálogo de artículos usa claves superiores de producto y, en productos por fases, rutas tipo `["power_boost", "phase1"]`. Conserva esa forma al consultar, comprar o equipar artículos anidados. Los productos monetarios se relacionan con sus cantidades mediante `configure_currency_rewards()`.
 
 ## Pruebas y recorridos funcionales
 
