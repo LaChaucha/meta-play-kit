@@ -16,6 +16,16 @@ El proyecto está hecho para Godot 4.7, con GDScript tipado y renderer GL Compat
 - `interfaces/testAddons` es referencia archivada. No copies su runtime de Godot 3 al proyecto actual ni elimines esa referencia sin una petición explícita.
 - No hay backend ni guardado persistente: modelo, progreso, saldo, ajustes y compras viven en memoria durante la sesión.
 
+## Convención para commits
+
+Cuando el usuario autorice crear un commit, usa esta línea con el nombre y correo indicados y reemplaza el mensaje vacío por una descripción breve y acorde con los cambios realizados:
+
+```sh
+GIT_AUTHOR_NAME="Eduardo David Angeleri" GIT_AUTHOR_EMAIL="angeleridavid@gmail.com" GIT_COMMITTER_NAME="Eduardo David Angeleri" GIT_COMMITTER_EMAIL="angeleridavid@gmail.com" git commit -m "<descriptive commit message>"
+```
+
+No crees commits ni hagas push sin autorización explícita del usuario.
+
 ## Estructura del proyecto
 
 | Ruta | Responsabilidad |
