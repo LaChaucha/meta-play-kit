@@ -1,0 +1,24 @@
+{
+  "name": "Buy a currency pack through the desktop IAP simulation",
+  "scene_path": "scenes/main.tscn",
+  "viewport_size": {"width": 1280, "height": 720},
+  "settle_frames": 4,
+  "steps": [
+    {"type": "wait_until", "node_path": "Background/ScreenFrame/ScreenStack/HomeScreen", "property": "visible", "expected": true},
+    {"type": "wait_until", "node_path": "LoadingOverlay", "property": "visible", "expected": false},
+    {"type": "mouse_button", "button_index": 1, "position": {"x": 532, "y": 654}, "pressed": true},
+    {"type": "mouse_button", "button_index": 1, "position": {"x": 532, "y": 654}, "pressed": false},
+    {"type": "wait_until", "node_path": "ModalOverlay/DialogCenter/Dialog/DialogBody/DialogTitle", "property": "text", "expected": "TIENDA"},
+    {"type": "mouse_button", "button_index": 1, "position": {"x": 751, "y": 177}, "pressed": true},
+    {"type": "mouse_button", "button_index": 1, "position": {"x": 751, "y": 177}, "pressed": false},
+    {"type": "wait_until", "node_path": "ModalOverlay/DialogCenter/Dialog/DialogBody/StoreBalance", "property": "text", "expected": "Saldo: 800"},
+    {"type": "mouse_button", "button_index": 1, "position": {"x": 636, "y": 297}, "pressed": true},
+    {"type": "mouse_button", "button_index": 1, "position": {"x": 636, "y": 297}, "pressed": false},
+    {"type": "wait_until", "node_path": "ModalOverlay/DialogCenter/Dialog/DialogBody/DialogTitle", "property": "text", "expected": "CONFIRMAR"},
+    {"type": "mouse_button", "button_index": 1, "position": {"x": 742, "y": 420}, "pressed": true},
+    {"type": "mouse_button", "button_index": 1, "position": {"x": 742, "y": 420}, "pressed": false},
+    {"type": "wait_until", "node_path": "ModalOverlay/DialogCenter/Dialog/DialogBody/StoreBalance", "property": "text", "expected": "Saldo: 1.300"},
+    {"type": "assert", "assertion": "property", "node_path": "Background/ScreenFrame/ScreenStack/HomeScreen/StatusBar/CoinLabel", "property": "text", "expected": "MONEDAS  1.300"},
+    {"type": "ui_report", "label": "currency-store", "node_path": "ModalOverlay/DialogCenter/Dialog", "fail_on": ["any"]}
+  ]
+}

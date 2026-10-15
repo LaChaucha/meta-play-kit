@@ -1,0 +1,14 @@
+{
+  "name": "Open the local promotional preview",
+  "scene_path": "scenes/main.tscn",
+  "viewport_size": {"width": 1280, "height": 720},
+  "settle_frames": 4,
+  "steps": [
+    {"type": "wait_until", "node_path": "Background/ScreenFrame/ScreenStack/HomeScreen", "property": "visible", "expected": true},
+    {"type": "wait_until", "node_path": "LoadingOverlay", "property": "visible", "expected": false},
+    {"type": "mouse_button", "button_index": 1, "position": {"x": 964, "y": 654}, "pressed": true},
+    {"type": "mouse_button", "button_index": 1, "position": {"x": 964, "y": 654}, "pressed": false},
+    {"type": "wait_until", "node_path": "ModalOverlay/DialogCenter/Dialog/DialogBody/DialogTitle", "property": "text", "expected": "VIDEO PROMOCIONAL"},
+    {"type": "ui_report", "label": "promo", "node_path": "ModalOverlay/DialogCenter/Dialog", "fail_on": ["any"]}
+  ]
+}
