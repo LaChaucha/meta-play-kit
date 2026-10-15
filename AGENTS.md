@@ -4,14 +4,14 @@
 
 MetaPlayKit es una demo de integración del kit de metajuego descrito originalmente en `interfaces/`. Implementa una interfaz navegable para inicio, carga de nivel, selector, partida simulada, pausa, victoria/derrota, recompensas, configuración, tienda de artículos, compra simulada de moneda y vista promocional.
 
-El proyecto está hecho para Godot 4.7, con GDScript tipado y renderer GL Compatibility. La escena principal es `res://scenes/main.tscn`. La carpeta `interfaces/` y su antiguo `testAddons` son material de referencia: no forman parte del runtime y `.gdignore` impide importar el proyecto legado.
+El proyecto está hecho para Godot 4.7, con GDScript tipado y renderer GL Compatibility. La escena principal de la demo es `res://demo/scenes/main.tscn`. El addon reutilizable vive en `addons/metaplay_kit/`; `demo/` es el proyecto consumidor de ejemplo. La carpeta `interfaces/` y su antiguo `testAddons` son material de referencia: no forman parte del runtime y `.gdignore` impide importar el proyecto legado.
 
 ## Reglas para trabajar en este proyecto
 
 - Mantén separadas las responsabilidades: `MetaPlayModel` aplica reglas y estado; `TtpGuiApi` expone el contrato y coordina; `MetaPlayDemoStage` compone y presenta la demo; los componentes reutilizables manejan piezas acotadas de UI.
 - Antes de editar GDScript, consulta las convenciones de Godot 4 y conserva tipos explícitos en variables, argumentos y retornos. Evita inferir tipos desde `Variant`, diccionarios, nodos o valores nulos.
 - Usa rutas `res://` para recursos del proyecto. Si mueves o renombras recursos, actualiza todas sus referencias y sidecars `.uid`/`.import` usando herramientas apropiadas de Godot.
-- Construye la interfaz dinámica con contenedores. El tema global vive en `theme/metaplay.tres`; evita añadir sombras o overrides tipográficos generales sin comprobar su efecto en todo el proyecto.
+- Construye la interfaz dinámica con contenedores. El tema global vive en `addons/metaplay_kit/assets/theme/metaplay.tres`; evita añadir sombras o overrides tipográficos generales sin comprobar su efecto en todo el proyecto.
 - No conviertas la IAP simulada en una compra real ni abras enlaces externos automáticamente. La compra en escritorio es explícitamente una simulación; los enlaces se abren sólo por acción del usuario.
 - `interfaces/testAddons` es referencia archivada. No copies su runtime de Godot 3 al proyecto actual ni elimines esa referencia sin una petición explícita.
 - No hay backend ni guardado persistente: modelo, progreso, saldo, ajustes y compras viven en memoria durante la sesión.
@@ -20,24 +20,19 @@ El proyecto está hecho para Godot 4.7, con GDScript tipado y renderer GL Compat
 
 | Ruta | Responsabilidad |
 | --- | --- |
-| `project.godot` | Configuración, escena principal, autoload, resolución, acciones y tema. |
-| `scenes/main.tscn` | Escena raíz de la demo; usa `scripts/demo/stage.gd`. |
-| `scenes/level_stub.tscn` | Nivel de prueba con el ciclo de vida de `MetaPlayDemoLevel`. |
-| `scripts/core/meta_play_model.gd` | Estado e invariantes de niveles, monedas, tienda, artículos y configuración. |
-| `scripts/facade/ttp_gui_api.gd` | Autoload `TtpGuiApi`: contrato público, señales, delegación al modelo y coordinación de carga. |
-| `scripts/systems/resource_batch.gd` | Carga asíncrona de recursos mediante `ResourceLoader` y caché de recursos listos. |
-| `scripts/demo/stage.gd` | Controlador/composición de la demo, pantallas, diálogos y conexión de señales. |
-| `scripts/demo/level.gd` | Nivel simulado y estados activo/inactivo, victoria, derrota y reanimación. |
-| `scripts/controllers/loading_overlay.gd` | Presentación de progreso y transiciones del overlay de carga. |
-| `scripts/ui/ui_factory.gd` | Constructores pequeños de controles, etiquetas, botones y separadores. |
-| `scripts/components/` | Componentes reutilizables: lista desplazable, fondo bloqueante, estrellas y botón de tienda. |
-| `scripts/utilities/iap_adapter.gd` | Adaptador de IAP; simulación de escritorio y frontera opcional con plugin. |
-| `theme/metaplay.tres` | Tema global y variación tipográfica de títulos. |
-| `art/ui/`, `art/world/` | Iconos y fondos reutilizados/extractos para la demo. |
-| `resources/`, `audio/`, `ui/` | Recursos auxiliares y espacio para futuras extensiones. |
-| `tests/` | Pruebas de reglas de dominio y carga de niveles. |
-| `scenarios/` | Recorridos automatizados de interacción y layout. |
-| `tools/extract_legacy_assets.py` | Herramienta usada para extraer recursos visuales del material legado. |
+| `project.godot` | Configuración de la demo, escena principal, autoload `TtpGuiApi` y tema. |
+| `addons/metaplay_kit/plugin.cfg`, `plugin.gd` | Addon instalable; registra el autoload al habilitar el plugin. |
+| `addons/metaplay_kit/runtime/api/ttp_gui_api.gd` | Contrato público, señales y coordinación del kit. |
+| `addons/metaplay_kit/runtime/model/meta_play_model.gd` | Reglas y estado de niveles, monedas, tienda, artículos y configuración. |
+| `addons/metaplay_kit/runtime/systems/resource_batch.gd` | Carga asíncrona de recursos. |
+| `addons/metaplay_kit/runtime/components/` | Componentes de interfaz reutilizables. |
+| `addons/metaplay_kit/runtime/ui/` | Fábrica UI y overlay de carga. |
+| `addons/metaplay_kit/runtime/platform/iap_adapter.gd` | Frontera opcional de pagos y simulación de escritorio. |
+| `addons/metaplay_kit/assets/` | Tema e iconos reutilizables del kit. |
+| `demo/scenes/`, `demo/scripts/` | Aplicación de ejemplo y nivel simulado consumidor del addon. |
+| `demo/assets/`, `demo/tools/` | Recursos y utilidades exclusivos de la demo. |
+| `tests/`, `scenarios/` | Pruebas del kit y recorridos funcionales de la demo. |
+| `interfaces/` | Referencia archivada; no forma parte del runtime. |
 
 ## Inicialización y primer arranque
 
@@ -129,12 +124,12 @@ Ejecuta desde la raíz del proyecto. El runtime disponible al momento de documen
 
 ```powershell
 $env:PYTHONUTF8 = '1'
-python 'C:\Users\edgam\.codex-personal\skills\godot\scripts\debug\lint_project.py' .
+python 'C:\Users\edgam\.codex-personal\skills\godot\scripts\debug\lint_project.py' . --include-addons
 python 'C:\Users\edgam\.codex-personal\skills\godot\scripts\test\run_tests.py' . --framework mini --strict
 python 'C:\Users\edgam\.codex-personal\skills\godot\scripts\debug\smoke_scenes.py' . --seconds 2 --fuzz --fuzz-seed 20261015 --jobs 2 --warnings-as-errors
 ```
 
-Los escenarios se ejecutan con `scripts/debug/run_scenario.py`, pasando el proyecto, el JSON correspondiente y `--godot-bin` con el ejecutable console de Godot. Ejecuta todos los JSON de `scenarios/` al modificar la navegación o componentes compartidos. Para validación completa, valida por separado los subárboles `scripts`, `scenes`, `theme` y `tests`; `interfaces/` contiene un proyecto legado archivado y no debe incluirse en una validación recursiva normal.
+Los escenarios se ejecutan con `scripts/debug/run_scenario.py`, pasando el proyecto, el JSON correspondiente y `--godot-bin` con el ejecutable console de Godot. Ejecuta todos los JSON de `scenarios/` al modificar la navegación o componentes compartidos. Para validación completa, valida por separado `addons/metaplay_kit`, `demo` y `tests`; `interfaces/` contiene un proyecto legado archivado y no debe incluirse en una validación recursiva normal.
 
 ## Historial técnico relevante
 

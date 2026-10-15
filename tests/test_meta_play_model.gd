@@ -1,7 +1,7 @@
 extends "res://tests/test_case.gd"
 
-const ModelScript: GDScript = preload("res://scripts/core/meta_play_model.gd")
-const LevelScript: GDScript = preload("res://scripts/demo/level.gd")
+const ModelScript: GDScript = preload("res://addons/metaplay_kit/runtime/model/meta_play_model.gd")
+const LevelScript: GDScript = preload("res://demo/scripts/level.gd")
 
 var model: MetaPlayModel
 

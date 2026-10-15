@@ -11,14 +11,14 @@ config_version=5
 [application]
 
 config/name="MetaPlayKit"
-run/main_scene="res://scenes/main.tscn"
+run/main_scene="res://demo/scenes/main.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 run/low_processor_mode=true
 config/icon="res://icon.svg"
 
 [autoload]
 
-TtpGuiApi="*res://scripts/facade/ttp_gui_api.gd"
+TtpGuiApi="*res://addons/metaplay_kit/runtime/api/ttp_gui_api.gd"
 
 [display]
 
@@ -31,7 +31,7 @@ window/stretch/aspect="expand"
 
 [gui]
 
-theme/custom="res://theme/metaplay.tres"
+theme/custom="res://addons/metaplay_kit/assets/theme/metaplay.tres"
 
 [input]
 
@@ -52,3 +52,7 @@ pause={
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/metaplay_kit/plugin.cfg")

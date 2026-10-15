@@ -1,5 +1,5 @@
 {
-  "scene_path": "scenes/main.tscn",
+  "scene_path": "demo/scenes/main.tscn",
   "viewport_size": {
 	"width": 1280,
 	"height": 720
@@ -36,7 +36,7 @@
 	},
 	{
 	  "type": "screenshot",
-	  "path": "res://art/screenshots/home.png",
+	  "path": "res://demo/screenshots/home.png",
 	  "expect": {
 		"not_blank": true,
 		"min_opaque_ratio": 0.95

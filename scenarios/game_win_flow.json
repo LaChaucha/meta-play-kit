@@ -1,6 +1,6 @@
 {
   "name": "Win, advance, retry and revive with correctly instantiated levels",
-  "scene_path": "scenes/main.tscn",
+  "scene_path": "demo/scenes/main.tscn",
   "viewport_size": {"width": 1280, "height": 720},
   "settle_frames": 4,
   "steps": [
@@ -16,7 +16,7 @@
     {"type": "assert", "assertion": "property", "node_path": "Background/ScreenFrame/ScreenStack/GameScreen/GameHeader/GameCoinLabel", "property": "text", "expected": "MONEDAS  920"},
     {"type": "assert", "assertion": "node_exists", "node_path": "ModalOverlay/DialogCenter/Dialog/DialogBody/ResultStars"},
     {"type": "ui_report", "label": "win-dialog", "node_path": "ModalOverlay/DialogCenter/Dialog", "fail_on": ["any"]},
-    {"type": "screenshot", "path": "res://art/screenshots/win.png", "expect": {"not_blank": true, "min_opaque_ratio": 0.95}},
+    {"type": "screenshot", "path": "res://demo/screenshots/win.png", "expect": {"not_blank": true, "min_opaque_ratio": 0.95}},
     {"type": "mouse_button", "button_index": 1, "position": {"x": 630, "y": 445}, "pressed": true},
     {"type": "mouse_button", "button_index": 1, "position": {"x": 630, "y": 445}, "pressed": false},
     {"type": "wait_until", "node_path": "Background/ScreenFrame/ScreenStack/GameScreen/LevelCenter/LevelCard/LevelContent/LevelName", "property": "text", "expected": "Nivel 02", "timeout_seconds": 4.0},

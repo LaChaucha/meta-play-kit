@@ -1,6 +1,6 @@
 {
   "name": "Home UI at a wide desktop viewport",
-  "scene_path": "scenes/main.tscn",
+  "scene_path": "demo/scenes/main.tscn",
   "viewport_size": {"width": 1600, "height": 900},
   "settle_frames": 4,
   "steps": [

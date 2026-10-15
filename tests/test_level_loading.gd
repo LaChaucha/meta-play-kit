@@ -1,7 +1,7 @@
 extends "res://tests/test_case.gd"
 
-const BatchScript: GDScript = preload("res://scripts/systems/resource_batch.gd")
-const LEVEL_PATH: String = "res://scenes/level_stub.tscn"
+const BatchScript: GDScript = preload("res://addons/metaplay_kit/runtime/systems/resource_batch.gd")
+const LEVEL_PATH: String = "res://demo/scenes/level_stub.tscn"
 
 
 func test_consumed_scene_can_be_loaded_again_for_next_level_and_retry() -> void:
@@ -22,7 +22,7 @@ func test_consumed_scene_can_be_loaded_again_for_next_level_and_retry() -> void:
 
 
 func test_uninstantiable_level_returns_home_without_showing_game() -> void:
-	var stage: Node = add_scene("res://scenes/main.tscn")
+	var stage: Node = add_scene("res://demo/scenes/main.tscn")
 	var loading: Control = stage.get_node("LoadingOverlay") as Control
 	var boot_completed: bool = await wait_until(func() -> bool: return not loading.visible)
 	if not assert_true(boot_completed):

@@ -1,6 +1,6 @@
 {
   "name": "Lose a level and revive through the simulated reward",
-  "scene_path": "scenes/main.tscn",
+  "scene_path": "demo/scenes/main.tscn",
   "viewport_size": {"width": 1280, "height": 720},
   "settle_frames": 4,
   "steps": [
