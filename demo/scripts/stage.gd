@@ -30,6 +30,7 @@ var _result_payload: Dictionary = {}
 var _initial_boot: bool = true
 var _current_level_node: Node = null
 var _loading_level_key: Variant = null
+var _loading_operation_id: int = 0
 
 
 func _ready() -> void:
@@ -148,7 +149,7 @@ func revive_level(_level: Dictionary) -> void:
 	_show_game({"level_key": _current_level_key, "revived": true})
 
 
-func duplicate_won_coins(_next_level: Dictionary, balance: int) -> void:
+func duplicate_won_coins(_next_level_data: Dictionary, balance: int) -> void:
 	_update_coins(balance)
 
 
@@ -358,6 +359,7 @@ func _connect_api() -> void:
 	TtpGuiApi.navigation_requested.connect(_on_screen_requested)
 	TtpGuiApi.level_load_started.connect(_on_loading_started)
 	TtpGuiApi.level_load_completed.connect(_on_loading_completed)
+	TtpGuiApi.level_load_failed.connect(_on_loading_failed)
 	TtpGuiApi.currency_balance_changed.connect(_update_coins)
 	TtpGuiApi.action_rejected.connect(_on_operation_rejected)
 	TtpGuiApi.item_equipped.connect(update_item_game_loaded)
@@ -770,7 +772,8 @@ func _on_screen_requested(screen_name: String, payload: Dictionary) -> void:
 			_show_lose(payload)
 
 
-func _on_loading_started(level_data: Dictionary) -> void:
+func _on_loading_started(operation_id: int, level_data: Dictionary) -> void:
+	_loading_operation_id = operation_id
 	_loading_level_key = level_data.get("key", _current_level_key)
 	get_tree().paused = false
 	if is_instance_valid(_current_level_node) and _current_level_node.has_method("stop_level"):
@@ -780,17 +783,20 @@ func _on_loading_started(level_data: Dictionary) -> void:
 	_close_dialog()
 
 
-func _on_loading_progress(progress: float) -> void:
+func _on_loading_progress(operation_id: int, progress: float) -> void:
+	if operation_id != _loading_operation_id:
+		return
 	_loading.update_progress(progress)
 
 
-func _on_loading_completed() -> void:
-	var level_data: Dictionary = TtpGuiApi.get_level(_loading_level_key)
-	level_data["key"] = _loading_level_key
+func _on_loading_completed(operation_id: int, level_data: Dictionary) -> void:
+	if operation_id != _loading_operation_id:
+		return
 	if not show_level(level_data):
 		show_home()
 		return
 	_loading_level_key = null
+	_loading_operation_id = 0
 	_loading.load_finished()
 	_loading.complete_loading()
 	if _initial_boot:
@@ -798,6 +804,13 @@ func _on_loading_completed() -> void:
 		show_home()
 	else:
 		_show_game({"level_key": _current_level_key})
+
+
+func _on_loading_failed(operation_id: int, _level_data: Dictionary, _message: String) -> void:
+	if operation_id != _loading_operation_id:
+		return
+	_loading_operation_id = 0
+	show_home()
 
 
 func _on_operation_rejected(message: String) -> void:

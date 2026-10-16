@@ -75,12 +75,12 @@ El primer nivel se carga e instancia, pero el primer arranque termina en inicio;
 
 La carga tiene una clave activa y una clave pendiente. `MetaPlayDemoStage._loading_level_key` identifica el destino que se está cargando; `_current_level_key` sólo cambia cuando el recurso se instancia correctamente.
 
-1. La UI solicita `TtpGuiApi.request_level_load(key)` o una acción de fachada equivalente.
+1. La UI solicita `TtpGuiApi.request_level_load(key)` o una acción de fachada equivalente. Cada solicitud aceptada recibe un `operation_id` monotónico; las solicitudes rechazadas no emiten eventos del ciclo de carga.
 2. La fachada busca el nivel en el modelo, copia su definición y añade `key` al diccionario enviado a `loading_started`.
 3. El stage guarda la clave pendiente, despausa el árbol, detiene el nivel actual, oculta el juego y muestra el overlay.
 4. `ResourceBatch` solicita el recurso con `ResourceLoader.load_threaded_request`, actualiza progreso y obtiene el `Resource` cuando termina.
 5. Al terminar, `ResourceBatch` libera la lista activa antes de emitir finalización. Esto permite cargar la misma escena otra vez (por ejemplo, al repetir o pasar de nivel).
-6. La fachada emite `loading_completed`; el stage recupera los datos pendientes e intenta convertir el recurso en `PackedScene` e instanciarlo.
+6. La fachada emite `level_load_completed(operation_id, level_data)`; el stage correlaciona el ID y convierte el recurso en `PackedScene` para instanciarlo. Los fallos del cargador emiten `level_load_failed(operation_id, level_data, message)` y nunca éxito para el mismo ID.
 7. Sólo después de una instancia válida se reemplaza `CurrentLevel`, se configura con clave y stage anfitrión, se actualiza la clave activa y se llama `start_level()`.
 8. Si la instancia falla, el stage muestra un aviso y vuelve a inicio sin presentar una partida falsa ni cambiar la clave activa.
 9. El overlay completa su animación y el stage muestra inicio en el primer arranque o la pantalla de juego en cargas posteriores.
@@ -111,7 +111,7 @@ El nivel de prueba no implementa gameplay real; sus botones simulan los callback
 
 ## Contrato de señales
 
-`TtpGuiApi` es el punto de entrada para consumidores. El stage escucha `navigation_requested`, `level_load_started`, `level_load_completed`, `level_load_exit_animation_completed`, `loading_progress_changed`, `action_rejected`, `currency_balance_changed`, `store_catalog_changed` y señales de configuración/recompensas. El modelo y el cargador son detalles internos; los consumidores usan consultas de la fachada para obtener copias de los datos. Los nombres legacy se conservan como wrappers/señales de compatibilidad para el contrato de `interfaces/INT-85-TTP_GUI_API.md`.
+`TtpGuiApi` es el punto de entrada para consumidores. El ciclo de carga expone `operation_id` en inicio, progreso y resultado terminal (`level_load_completed`, `level_load_failed` o `level_load_cancelled`); la cancelación se reserva para la tarea correspondiente y aún no tiene comando público. El stage escucha además `navigation_requested`, `level_load_exit_animation_completed`, `action_rejected`, `currency_balance_changed`, `store_catalog_changed` y señales de configuración/recompensas. El modelo y el cargador son detalles internos; los consumidores usan consultas de la fachada para obtener copias de los datos. Los nombres legacy se conservan como wrappers/señales de compatibilidad para el contrato de `interfaces/INT-85-TTP_GUI_API.md`.
 
 Usa métodos de la fachada en lugar de modificar directamente campos del modelo desde componentes nuevos. La excepción actual es la UI de demo, que lee algunos datos de catálogo/configuración para presentarlos; las mutaciones pasan por métodos del modelo/fachada.
 
