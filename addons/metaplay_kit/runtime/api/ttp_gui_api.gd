@@ -5,10 +5,12 @@ extends Node
 
 const LEVEL_LOAD_BUSY_MESSAGE: String = "A level load is already in progress."
 
-signal level_load_started(level_data: Dictionary)
-signal level_load_completed()
-signal level_load_exit_animation_completed()
-signal loading_progress_changed(progress: float)
+signal level_load_started(operation_id: int, level_data: Dictionary)
+signal level_load_completed(operation_id: int, level_data: Dictionary)
+signal level_load_failed(operation_id: int, level_data: Dictionary, message: String)
+signal level_load_cancelled(operation_id: int, level_data: Dictionary)
+signal level_load_exit_animation_completed(operation_id: int)
+signal loading_progress_changed(operation_id: int, progress: float)
 signal navigation_requested(screen_name: String, payload: Dictionary)
 signal action_rejected(message: String)
 signal currency_balance_changed(total: int)
@@ -34,10 +36,10 @@ signal modal_lose_video_reward_showed(level_data: Dictionary)
 signal modal_win_retry_button_pressed(level_data: Dictionary)
 signal modal_win_load_next_level_pressed(level_data: Dictionary)
 signal home_tap_to_play_pressed()
-signal loading_started(level_data: Dictionary)
-signal loading_completed()
+signal loading_started(operation_id: int, level_data: Dictionary)
+signal loading_completed(operation_id: int, level_data: Dictionary)
 signal level_selector_load_new_level_selected(level_data: Dictionary)
-signal loading_exit_animation_completed()
+signal loading_exit_animation_completed(operation_id: int)
 signal store_game_update_item_loadded(item_key: Variant)
 signal store_game_buy_item(item_key: Array)
 signal store_currency_buy_coins(product_key: Variant)
@@ -66,6 +68,9 @@ var _resource_batch: ResourceBatch = ResourceBatch.new()
 var _loading_level: Dictionary = {}
 var _loading_path: String = ""
 var _load_request_active: bool = false
+var _load_terminal_emitting: bool = false
+var _next_load_operation_id: int = 0
+var _active_load_operation_id: int = 0
 
 
 func _ready() -> void:
@@ -164,7 +169,7 @@ func request_initial_level_load() -> Dictionary:
 
 
 func request_level_load(level_key: Variant) -> bool:
-	if _load_request_active:
+	if _load_request_active or _load_terminal_emitting:
 		_reject(LEVEL_LOAD_BUSY_MESSAGE)
 		return false
 	var level: Dictionary = get_level(level_key)
@@ -181,10 +186,12 @@ func request_level_load(level_key: Variant) -> bool:
 	_loading_level = level
 	_loading_level["key"] = level_key
 	_loading_path = scene_path
+	_next_load_operation_id += 1
+	_active_load_operation_id = _next_load_operation_id
 	_load_request_active = true
 	var level_data: Dictionary = _loading_level.duplicate(true)
-	level_load_started.emit(level_data)
-	loading_started.emit(level_data)
+	level_load_started.emit(_active_load_operation_id, level_data)
+	loading_started.emit(_active_load_operation_id, level_data)
 	_resource_batch.add_resource_to_batch(_loading_path)
 	_resource_batch.start_loading(24)
 	return true
@@ -361,23 +368,39 @@ func _on_store_changed() -> void:
 
 
 func _on_loading_progress(progress: float) -> void:
-	loading_progress_changed.emit(progress)
+	if _load_request_active:
+		loading_progress_changed.emit(_active_load_operation_id, progress)
 
 
 func _on_batch_finished() -> void:
-	level_load_completed.emit()
-	loading_completed.emit()
+	if not _load_request_active:
+		return
+	var operation_id: int = _active_load_operation_id
+	var level_data: Dictionary = _loading_level.duplicate(true)
 	_load_request_active = false
-	call_deferred("_emit_loading_exit")
+	_active_load_operation_id = 0
+	_load_terminal_emitting = true
+	level_load_completed.emit(operation_id, level_data)
+	loading_completed.emit(operation_id, level_data)
+	_load_terminal_emitting = false
+	call_deferred("_emit_loading_exit", operation_id)
 
 
-func _emit_loading_exit() -> void:
-	level_load_exit_animation_completed.emit()
-	loading_exit_animation_completed.emit()
+func _emit_loading_exit(operation_id: int) -> void:
+	level_load_exit_animation_completed.emit(operation_id)
+	loading_exit_animation_completed.emit(operation_id)
 
 
 func _on_batch_failed(_path: String, message: String) -> void:
+	if not _load_request_active:
+		return
+	var operation_id: int = _active_load_operation_id
+	var level_data: Dictionary = _loading_level.duplicate(true)
 	_load_request_active = false
+	_active_load_operation_id = 0
+	_load_terminal_emitting = true
+	level_load_failed.emit(operation_id, level_data, message)
+	_load_terminal_emitting = false
 	_reject(message)
 	_request_screen("home")
 

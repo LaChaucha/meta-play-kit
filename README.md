@@ -80,17 +80,19 @@ A level entry uses `name`, `max_score`, `max_stars`, `scene_path`, and `enabled`
 
 ### Loading integration
 
-Connect before requesting the initial level. The host receives the level definition (including `key`) at `level_load_started`, then retrieves the ready resource after `level_load_completed`. `get_loaded_resource(path)` consumes the ready resource, so a second immediate read returns `null`.
+Connect before requesting the initial level. Every accepted request gets a monotonically increasing `operation_id`. The start, progress, and terminal signals carry that same ID, so a host can correlate events even when the same scene is requested repeatedly. Each accepted operation emits exactly one terminal result: `level_load_completed`, `level_load_failed`, or (when cancellation is implemented) `level_load_cancelled`. Rejected requests emit no load lifecycle events. `get_loaded_resource(path)` consumes the ready resource, so a second immediate read returns `null`.
 
 ```gdscript
 extends Node
 
 var _pending_path: String = ""
 var _pending_key: Variant = null
+var _pending_operation_id: int = 0
 
 func _ready() -> void:
     TtpGuiApi.level_load_started.connect(_on_level_load_started)
     TtpGuiApi.level_load_completed.connect(_on_level_load_completed)
+    TtpGuiApi.level_load_failed.connect(_on_level_load_failed)
     TtpGuiApi.action_rejected.connect(_on_action_rejected)
     TtpGuiApi.configure_levels({
         "forest": {
@@ -103,12 +105,15 @@ func _ready() -> void:
     })
     TtpGuiApi.request_initial_level_load()
 
-func _on_level_load_started(level_data: Dictionary) -> void:
+func _on_level_load_started(operation_id: int, level_data: Dictionary) -> void:
+    _pending_operation_id = operation_id
     _pending_path = str(level_data.get("scene_path", ""))
     _pending_key = level_data.get("key")
     # Show the host game's loading UI.
 
-func _on_level_load_completed() -> void:
+func _on_level_load_completed(operation_id: int, level_data: Dictionary) -> void:
+    if operation_id != _pending_operation_id:
+        return
     var packed_scene: PackedScene = TtpGuiApi.get_loaded_resource(_pending_path) as PackedScene
     if packed_scene == null:
         TtpGuiApi.request_home_screen()
@@ -121,11 +126,18 @@ func _on_level_load_completed() -> void:
         level.call("start_level")
     # Replace the current level and present gameplay in the host UI.
 
+func _on_level_load_failed(operation_id: int, _level_data: Dictionary, message: String) -> void:
+    if operation_id != _pending_operation_id:
+        return
+    _pending_operation_id = 0
+    push_warning("Level load %d failed: %s" % [operation_id, message])
+    TtpGuiApi.request_home_screen()
+
 func _on_action_rejected(message: String) -> void:
     push_warning(message)
 ```
 
-The methods `configure(key, host)`, `start_level()`, `stop_level()`, and `revive()` are conventions demonstrated by `demo/scripts/level.gd`, not requirements imposed on host scenes. Connect `loading_progress_changed(progress)` to the host's progress UI if desired. A failed load emits `action_rejected` and requests the home screen.
+The methods `configure(key, host)`, `start_level()`, `stop_level()`, and `revive()` are conventions demonstrated by `demo/scripts/level.gd`, not requirements imposed on host scenes. Connect `loading_progress_changed(operation_id, progress)` to the host's progress UI if desired, and ignore progress whose ID is not the host's pending operation. A failed resource load emits `level_load_failed(operation_id, level_data, message)`, then `action_rejected(message)`, and requests the home screen. The cancellation terminal signal is reserved for the cancellation capability planned separately; this API version does not yet expose a cancellation request.
 
 ### Report gameplay results
 
@@ -140,8 +152,12 @@ The level-completion call records best stars and score, grants the configured se
 
 | Signal | Meaning |
 | --- | --- |
-| `level_load_started(level_data)` / `level_load_completed()` | An accepted level load started / its resource became ready. |
-| `loading_progress_changed(progress)` / `level_load_exit_animation_completed()` | Loading progress and completion of the demo-compatible exit transition. |
+| `level_load_started(operation_id, level_data)` | An accepted load began. The ID is unique and increasing for the lifetime of the API node. |
+| `loading_progress_changed(operation_id, progress)` | Progress for the identified active operation. |
+| `level_load_completed(operation_id, level_data)` | Terminal success: the requested resource became ready. |
+| `level_load_failed(operation_id, level_data, message)` | Terminal failure: resource loading failed; never emitted together with success for the same ID. |
+| `level_load_cancelled(operation_id, level_data)` | Reserved terminal outcome for the cancellation feature; no cancellation command is available yet. |
+| `level_load_exit_animation_completed(operation_id)` | The demo-compatible exit transition finished after successful resource loading. |
 | `navigation_requested(screen_name, payload)` | A screen transition is requested (`home`, `game`, `levels`, `store`, `settings`, `win`, or `lose`). |
 | `action_rejected(message)` | A requested action or load could not be completed. |
 | `currency_balance_changed(total)` / `store_catalog_changed()` | Wallet or item catalog changed. |
