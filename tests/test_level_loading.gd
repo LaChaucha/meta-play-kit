@@ -2,6 +2,7 @@ extends "res://tests/test_case.gd"
 
 const BatchScript: GDScript = preload("res://addons/metaplay_kit/runtime/systems/resource_batch.gd")
 const FailingStartLevel: GDScript = preload("res://tests/fixtures/failing_start_level.gd")
+const ApiScript: GDScript = preload("res://addons/metaplay_kit/runtime/api/ttp_gui_api.gd")
 const LEVEL_PATH: String = "res://demo/scenes/level_stub.tscn"
 const LEVEL_SCENE: PackedScene = preload("res://demo/scenes/level_stub.tscn")
 
@@ -201,6 +202,81 @@ func test_successful_load_closes_operation_before_terminal_signal() -> void:
 	TtpGuiApi.level_load_started.disconnect(started_callback)
 	TtpGuiApi.loading_progress_changed.disconnect(progress_callback)
 	TtpGuiApi.level_load_completed.disconnect(completed_callback)
+
+
+func test_cancellation_closes_operation_once_and_allows_a_new_request() -> void:
+	TtpGuiApi.configure_levels({
+		"first": {"name": "First", "enabled": true, "scene_path": LEVEL_PATH},
+		"second": {"name": "Second", "enabled": true, "scene_path": LEVEL_PATH},
+	})
+	var started_ids: Array[int] = []
+	var cancelled_ids: Array[int] = []
+	var completed_ids: Array[int] = []
+	var cancellation_states: Array[bool] = []
+	var cancel_results: Array[bool] = []
+	var started_callback: Callable = func(operation_id: int, _data: Dictionary) -> void: started_ids.append(operation_id)
+	var progress_callback: Callable = func(operation_id: int, _progress: float) -> void:
+		if cancel_results.is_empty():
+			cancel_results.append(TtpGuiApi.cancel_level_load(operation_id))
+	var cancelled_callback: Callable = func(operation_id: int, _data: Dictionary) -> void:
+		cancelled_ids.append(operation_id)
+		cancellation_states.append(TtpGuiApi.is_loading())
+	var completed_callback: Callable = func(operation_id: int, _data: Dictionary, _resource: Resource) -> void: completed_ids.append(operation_id)
+	TtpGuiApi.level_load_started.connect(started_callback)
+	TtpGuiApi.loading_progress_changed.connect(progress_callback)
+	TtpGuiApi.level_load_cancelled.connect(cancelled_callback)
+	TtpGuiApi.level_load_completed.connect(completed_callback)
+	assert_true(TtpGuiApi.request_level_load("first"))
+	assert_eq(cancel_results, [true], "The active operation can be cancelled during progress delivery.")
+	assert_eq(cancelled_ids, started_ids)
+	assert_eq(cancellation_states, [false], "is_loading() is false when cancellation is reported.")
+	assert_true(completed_ids.is_empty(), "Cancellation must suppress success for the same operation.")
+	var cancelled_operation_id: int = cancelled_ids[0]
+	TtpGuiApi._on_loading_progress(0.5)
+	TtpGuiApi._on_batch_finished()
+	TtpGuiApi._on_batch_failed(LEVEL_PATH, "Late failure callback")
+	assert_true(completed_ids.is_empty(), "Late loader callbacks must not publish a terminal result.")
+	assert_eq(cancelled_ids.size(), 1, "A late callback must not emit a second cancellation.")
+	assert_false(TtpGuiApi.cancel_level_load(cancelled_operation_id), "A terminal operation cannot be cancelled again.")
+	assert_true(TtpGuiApi.request_level_load("second"), "A new operation can start after cancellation.")
+	var finished: bool = await wait_until(func() -> bool: return not TtpGuiApi.is_loading())
+	assert_true(finished)
+	assert_eq(completed_ids, [started_ids[1]], "The next operation completes independently of the cancelled one.")
+	assert_false(TtpGuiApi.cancel_level_load(started_ids[1]), "A successful operation is already terminal.")
+	TtpGuiApi.level_load_started.disconnect(started_callback)
+	TtpGuiApi.loading_progress_changed.disconnect(progress_callback)
+	TtpGuiApi.level_load_cancelled.disconnect(cancelled_callback)
+	TtpGuiApi.level_load_completed.disconnect(completed_callback)
+
+
+func test_api_shutdown_cancels_an_active_operation_and_skips_loader_start() -> void:
+	var api: Node = ApiScript.new()
+	add_child(api)
+	api.call("configure_levels", {
+		"first": {"name": "First", "enabled": true, "scene_path": LEVEL_PATH},
+	})
+	var cancelled_ids: Array[int] = []
+	var completed_ids: Array[int] = []
+	var lifecycle_events: Array[String] = []
+	var cancelled_callback: Callable = func(operation_id: int, _data: Dictionary) -> void:
+		cancelled_ids.append(operation_id)
+		lifecycle_events.append("cancelled")
+	var completed_callback: Callable = func(operation_id: int, _data: Dictionary, _resource: Resource) -> void: completed_ids.append(operation_id)
+	var legacy_started_callback: Callable = func(_operation_id: int, _data: Dictionary) -> void: lifecycle_events.append("legacy_started")
+	var remove_api_on_start: Callable = func(_operation_id: int, _data: Dictionary) -> void:
+		lifecycle_events.append("started")
+		remove_child(api)
+	api.connect("level_load_cancelled", cancelled_callback)
+	api.connect("level_load_completed", completed_callback)
+	api.connect("loading_started", legacy_started_callback)
+	api.connect("level_load_started", remove_api_on_start)
+	var accepted: bool = bool(api.call("request_level_load", "first"))
+	assert_true(accepted, "The request was accepted before its owner shut down.")
+	assert_eq(cancelled_ids, [1], "Shutdown closes the active operation with cancellation.")
+	assert_true(completed_ids.is_empty(), "Shutdown must not start or publish a successful load.")
+	assert_eq(lifecycle_events, ["started", "legacy_started", "cancelled"], "All start notifications precede their terminal cancellation.")
+	assert_false(bool(api.call("is_loading")))
+	api.free()
 
 
 func test_consumed_scene_can_be_loaded_again_for_next_level_and_retry() -> void:

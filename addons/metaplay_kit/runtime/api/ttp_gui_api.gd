@@ -69,8 +69,12 @@ var _loading_level: Dictionary = {}
 var _loading_path: String = ""
 var _load_request_active: bool = false
 var _load_terminal_emitting: bool = false
+var _load_start_signals_emitting: bool = false
+var _is_shutting_down: bool = false
 var _next_load_operation_id: int = 0
 var _active_load_operation_id: int = 0
+var _pending_cancelled_operation_id: int = 0
+var _pending_cancelled_level_data: Dictionary = {}
 
 
 func _ready() -> void:
@@ -79,6 +83,18 @@ func _ready() -> void:
 	_resource_batch.load_finished.connect(_on_batch_finished)
 	_resource_batch.load_failed.connect(_on_batch_failed)
 	_resource_batch.stage_updated.connect(_on_loading_progress)
+
+
+func _enter_tree() -> void:
+	_is_shutting_down = false
+
+
+func _exit_tree() -> void:
+	_is_shutting_down = true
+	if _load_request_active:
+		_finish_active_load_as_cancelled()
+	else:
+		_resource_batch.close()
 
 
 # Configuration commands.
@@ -169,6 +185,8 @@ func request_initial_level_load() -> Dictionary:
 
 
 func request_level_load(level_key: Variant) -> bool:
+	if _is_shutting_down:
+		return false
 	if _load_request_active or _load_terminal_emitting:
 		_reject(LEVEL_LOAD_BUSY_MESSAGE)
 		return false
@@ -190,11 +208,54 @@ func request_level_load(level_key: Variant) -> bool:
 	_active_load_operation_id = _next_load_operation_id
 	_load_request_active = true
 	var level_data: Dictionary = _loading_level.duplicate(true)
-	level_load_started.emit(_active_load_operation_id, level_data)
-	loading_started.emit(_active_load_operation_id, level_data)
+	var operation_id: int = _active_load_operation_id
+	_load_start_signals_emitting = true
+	level_load_started.emit(operation_id, level_data)
+	loading_started.emit(operation_id, level_data)
+	_load_start_signals_emitting = false
+	if _pending_cancelled_operation_id == operation_id:
+		_emit_pending_load_cancelled()
+		return true
+	if not _load_request_active or _active_load_operation_id != operation_id or _is_shutting_down:
+		return true
 	_resource_batch.add_resource_to_batch(_loading_path)
 	_resource_batch.start_loading(24)
 	return true
+
+
+func cancel_level_load(operation_id: int) -> bool:
+	if _is_shutting_down or not _load_request_active or operation_id != _active_load_operation_id:
+		return false
+	_finish_active_load_as_cancelled()
+	return true
+
+
+func _finish_active_load_as_cancelled() -> void:
+	if not _load_request_active:
+		return
+	var operation_id: int = _active_load_operation_id
+	var level_data: Dictionary = _loading_level.duplicate(true)
+	_load_request_active = false
+	_active_load_operation_id = 0
+	_load_terminal_emitting = true
+	_loading_level.clear()
+	_loading_path = ""
+	_resource_batch.close()
+	if _load_start_signals_emitting:
+		_pending_cancelled_operation_id = operation_id
+		_pending_cancelled_level_data = level_data
+		return
+	level_load_cancelled.emit(operation_id, level_data)
+	_load_terminal_emitting = false
+
+
+func _emit_pending_load_cancelled() -> void:
+	var operation_id: int = _pending_cancelled_operation_id
+	var level_data: Dictionary = _pending_cancelled_level_data.duplicate(true)
+	_pending_cancelled_operation_id = 0
+	_pending_cancelled_level_data.clear()
+	level_load_cancelled.emit(operation_id, level_data)
+	_load_terminal_emitting = false
 
 
 func complete_level(
