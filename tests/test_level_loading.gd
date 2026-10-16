@@ -7,6 +7,58 @@ const LEVEL_PATH: String = "res://demo/scenes/level_stub.tscn"
 const LEVEL_SCENE: PackedScene = preload("res://demo/scenes/level_stub.tscn")
 
 
+func test_typed_load_result_correlates_success_failure_and_cancellation() -> void:
+	allow_errors()
+	var results: Array[MetaPlayResult] = []
+	var callback: Callable = func(result: MetaPlayResult) -> void: results.append(result)
+	TtpGuiApi.level_load_result.connect(callback)
+	TtpGuiApi.configure_levels({
+		"success": {"name": "Success", "enabled": true, "scene_path": LEVEL_PATH},
+		"failure": {"name": "Failure", "enabled": true, "scene_path": "user://missing_level_scene.tscn"},
+		"cancel": {"name": "Cancel", "enabled": true, "scene_path": LEVEL_PATH},
+		"locked": {"name": "Locked", "enabled": false, "scene_path": LEVEL_PATH},
+	})
+	var rejected_request: MetaPlayResult = TtpGuiApi.request_level_load_result("locked")
+	assert_eq(rejected_request.status, MetaPlayResult.Status.REJECTED)
+	assert_eq(rejected_request.code, &"level.locked")
+	assert_eq(rejected_request.operation_id, 0)
+	assert_true(results.is_empty(), "Rejected requests do not emit terminal results.")
+
+	var success_request: MetaPlayResult = TtpGuiApi.select_level("success")
+	assert_eq(success_request.status, MetaPlayResult.Status.ACCEPTED)
+	assert_true(await wait_until(func() -> bool: return not TtpGuiApi.is_loading()))
+	assert_eq(results.size(), 1)
+	assert_eq(results[0].status, MetaPlayResult.Status.COMPLETED)
+	assert_eq(results[0].operation_id, success_request.operation_id)
+	assert_eq(results[0].context.get("level_key"), "success")
+	assert_eq(results[0].context.get("scene_path"), LEVEL_PATH)
+	assert_is(results[0].context.get("resource"), PackedScene)
+	assert_eq((results[0].context.get("level_data") as Dictionary).get("name"), "Success")
+
+	var failure_request: MetaPlayResult = TtpGuiApi.select_level("failure")
+	assert_eq(failure_request.status, MetaPlayResult.Status.ACCEPTED)
+	assert_true(await wait_until(func() -> bool: return not TtpGuiApi.is_loading()))
+	assert_eq(results.size(), 2)
+	assert_eq(results[1].status, MetaPlayResult.Status.FAILED)
+	assert_eq(results[1].code, &"level.load_failed")
+	assert_eq(results[1].operation_id, failure_request.operation_id)
+	assert_eq(results[1].context.get("level_key"), "failure")
+	assert_eq(results[1].context.get("scene_path"), "user://missing_level_scene.tscn")
+
+	var cancel_callback: Callable = func(operation_id: int, _data: Dictionary) -> void:
+		TtpGuiApi.cancel_level_load(operation_id)
+	TtpGuiApi.level_load_started.connect(cancel_callback, CONNECT_ONE_SHOT)
+	var cancellation_request: MetaPlayResult = TtpGuiApi.select_level("cancel")
+	assert_eq(cancellation_request.status, MetaPlayResult.Status.ACCEPTED)
+	assert_eq(results.size(), 3)
+	assert_eq(results[2].status, MetaPlayResult.Status.CANCELLED)
+	assert_eq(results[2].operation_id, cancellation_request.operation_id)
+	assert_eq(results[2].context.get("level_key"), "cancel")
+	assert_eq(results[2].context.get("scene_path"), LEVEL_PATH)
+	assert_eq(results[2].context.get("resource"), null)
+	TtpGuiApi.level_load_result.disconnect(callback)
+
+
 func test_concurrent_level_request_is_rejected_and_selection_signals_follow_acceptance() -> void:
 	TtpGuiApi.configure_levels({
 		"first": {"name": "First", "enabled": true, "scene_path": LEVEL_PATH},

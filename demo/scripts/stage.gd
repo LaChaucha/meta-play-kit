@@ -370,9 +370,7 @@ func _build_game_screen() -> VBoxContainer:
 func _connect_api() -> void:
 	TtpGuiApi.navigation_requested.connect(_on_screen_requested)
 	TtpGuiApi.level_load_started.connect(_on_loading_started)
-	TtpGuiApi.level_load_completed.connect(_on_loading_completed)
-	TtpGuiApi.level_load_failed.connect(_on_loading_failed)
-	TtpGuiApi.level_load_cancelled.connect(_on_loading_cancelled)
+	TtpGuiApi.level_load_result.connect(_on_loading_result)
 	TtpGuiApi.currency_balance_changed.connect(_update_coins)
 	TtpGuiApi.action_rejected.connect(_on_operation_rejected)
 	TtpGuiApi.item_equipped.connect(update_item_game_loaded)
@@ -815,6 +813,23 @@ func _on_loading_completed(operation_id: int, level_data: Dictionary, resource: 
 		show_home()
 	else:
 		_show_game({"level_key": _current_level_key})
+
+
+func _on_loading_result(result: MetaPlayResult) -> void:
+	var result_context: Dictionary = result.context
+	var level_data: Dictionary = result_context.get("level_data", {}) as Dictionary
+	match result.status:
+		MetaPlayResult.Status.COMPLETED:
+			var resource: Resource = result_context.get("resource") as Resource
+			_on_loading_completed(result.operation_id, level_data, resource)
+		MetaPlayResult.Status.FAILED:
+			_on_loading_failed(
+				result.operation_id,
+				level_data,
+				str(result_context.get("message", "Level loading failed."))
+			)
+		MetaPlayResult.Status.CANCELLED:
+			_on_loading_cancelled(result.operation_id, level_data)
 
 
 func _on_loading_failed(operation_id: int, _level_data: Dictionary, _message: String) -> void:

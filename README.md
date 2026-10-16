@@ -68,7 +68,7 @@ A level entry uses `name`, `max_score`, `max_stars`, `scene_path`, and `enabled`
 | Purpose | Public methods |
 | --- | --- |
 | Configure session data | `configure_levels`, `configure_settings`, `configure_items`, `configure_currency_products`, `configure_currency_rewards`, `set_currency_balance` |
-| Load and progress | `request_initial_level_load`, `request_level_load(key) -> bool`, `cancel_level_load(operation_id)`, `select_level(key) -> MetaPlayResult`, `complete_level(key, stars, score, reward_currency, next_level_key) -> MetaPlayResult`, `report_level_loss(key)`, `retry_level(key) -> MetaPlayResult`, `load_next_level() -> MetaPlayResult` |
+| Load and progress | `request_initial_level_load`, `request_level_load(key) -> bool` (compatibility), `request_level_load_result(key) -> MetaPlayResult`, `cancel_level_load(operation_id)`, `select_level(key) -> MetaPlayResult`, `complete_level(key, stars, score, reward_currency, next_level_key) -> MetaPlayResult`, `report_level_loss(key)`, `retry_level(key) -> MetaPlayResult`, `load_next_level() -> MetaPlayResult` |
 | Store and wallet | `purchase_item(path)`, `equip_item(path)`, `credit_currency_product(product_key)` |
 | Settings and rewards | `toggle_sfx`, `toggle_music`, `revive_after_reward(key)`, `claim_reward_doubling(extra_currency)`, `use_life()` |
 | Navigation | `request_home_screen`, `request_level_selection_screen`, `request_store_screen`, `request_settings_screen`, `start_or_resume_game() -> MetaPlayResult` |
@@ -76,17 +76,17 @@ A level entry uses `name`, `max_score`, `max_stars`, `scene_path`, and `enabled`
 | Read store/settings state | `get_settings`, `get_items`, `get_item(path)`, `get_currency_products`, `get_currency_balance`, `get_item_type_values` |
 | Loading/presentation helpers | `get_loaded_resource(path)`, `is_loading`, `format_number(value)` |
 
-`complete_level()` returns `MetaPlayResult.Status.COMPLETED` after applying progress and rewards, or `REJECTED` with a stable code when it cannot apply the completion. `select_level()`, `retry_level()`, `load_next_level()`, and `start_or_resume_game()` return `ACCEPTED` with the load operation ID only after a load request starts; otherwise they return `REJECTED`. The accepted command result describes request admission, not the later scene-load outcome: observe `level_load_completed`, `level_load_failed`, or `level_load_cancelled` for that lifecycle. Direct `request_level_load()` still returns `bool` in this story; its typed terminal-result migration remains separate. Rejection codes include `level.not_found`, `level.locked`, `level.scene_path_missing`, `level.load_in_progress`, and `level.no_available_level`. Legacy `action_rejected` messages continue to emit during migration. Gameplay is presented by the host after the load completes and a valid level instance is created. The host owns stopping/pausing its gameplay node and deciding how to persist session state.
+`complete_level()` returns `MetaPlayResult.Status.COMPLETED` after applying progress and rewards, or `REJECTED` with a stable code when it cannot apply the completion. `select_level()`, `retry_level()`, `load_next_level()`, and `start_or_resume_game()` return `ACCEPTED` with the load operation ID only after a load request starts; otherwise they return `REJECTED`. `request_level_load_result(key)` provides the same typed admission result for direct load requests; `request_level_load(key) -> bool` remains as a compatibility wrapper. The accepted command result describes request admission, not the later scene-load outcome: observe `level_load_result` for that lifecycle. Rejection codes include `level.not_found`, `level.locked`, `level.scene_path_missing`, `level.load_in_progress`, and `level.no_available_level`. Legacy `action_rejected` messages continue to emit during migration. Gameplay is presented by the host after the load completes and a valid level instance is created. The host owns stopping/pausing its gameplay node and deciding how to persist session state.
 
 ### Typed operation results
 
-`MetaPlayResult` is the shared typed result contract for the gradual migration of facade commands. Its `status` is one of `ACCEPTED`, `COMPLETED`, `REJECTED`, `FAILED`, or `CANCELLED`; `code` is a stable `StringName` for rejected or failed outcomes; `operation_id` correlates asynchronous acceptance with its terminal result; and `context` carries structured details as a defensive deep copy. Accepted, successful, and cancelled outcomes have no error code. Synchronous results use operation ID `0`; accepted, failed, and cancelled asynchronous results require a positive ID. Create results with `MetaPlayResult.accepted()`, `completed()`, `rejected()`, `failed()`, and `cancelled()` so these invariants are checked. Progression facade commands now return this type; store commands and typed terminal load results will migrate in follow-up stories.
+`MetaPlayResult` is the shared typed result contract for the gradual migration of facade commands. Its `status` is one of `ACCEPTED`, `COMPLETED`, `REJECTED`, `FAILED`, or `CANCELLED`; `code` is a stable `StringName` for rejected or failed outcomes; `operation_id` correlates asynchronous acceptance with its terminal result; and `context` carries structured details as a defensive deep copy. Accepted, successful, and cancelled outcomes have no error code. Synchronous results use operation ID `0`; accepted, failed, and cancelled asynchronous results require a positive ID. Create results with `MetaPlayResult.accepted()`, `completed()`, `rejected()`, `failed()`, and `cancelled()` so these invariants are checked. Progression commands and terminal level-load events use this type; store commands will migrate in a follow-up story.
 
-Progression rejections also continue to emit the legacy `action_rejected` and `operation_rejected` message signals for existing consumers. New integrations should handle the returned result and avoid processing the same rejection again through a legacy signal. The load terminal signals keep their current signatures until their separate migration story; use the operation ID on the accepted progression result to correlate that existing load lifecycle.
+Progression rejections also continue to emit the legacy `action_rejected` and `operation_rejected` message signals for existing consumers. New integrations should handle the returned result and avoid processing the same rejection again through a legacy signal. Load consumers can migrate to `level_load_result(result: MetaPlayResult)`, emitted exactly once for each accepted operation with `COMPLETED`, `FAILED`, or `CANCELLED` status and the same operation ID. Its context contains `level_key`, a copied `level_data`, and `scene_path`; success also contains the exact loaded `resource`, while failure uses stable code `level.load_failed` and includes the loader's presentation-only `message`. Existing terminal signals remain available during migration; do not handle both the typed result and legacy terminal event for the same behavior.
 
 ### Loading integration
 
-Connect before requesting the initial level. Every accepted request gets a monotonically increasing `operation_id`. The start, progress, and terminal signals carry that same ID, so a host can correlate events even when the same scene is requested repeatedly. `loading_progress_changed` begins at `0.0`; values are clamped to `0.0..1.0` and never decrease during one operation. On success, progress reaches `1.0` before `level_load_completed`. Progress is an estimate of loader work: only `level_load_completed`, `level_load_failed`, or `level_load_cancelled` determines the terminal outcome, so progress reaching `1.0` alone does not mean success. Every accepted operation emits exactly one of those terminal results. A successful completion includes the exact loaded `Resource` and level definition for that operation. Rejected requests emit no load lifecycle events. `get_loaded_resource(path)` remains as a compatibility helper and consumes the ready resource; new integrations should use the resource delivered by the completion signal.
+Connect before requesting the initial level. Every accepted request gets a monotonically increasing `operation_id`. The start, progress, accepted command result, and typed terminal result carry that same ID, so a host can correlate events even when the same scene is requested repeatedly. `loading_progress_changed` begins at `0.0`; values are clamped to `0.0..1.0` and never decrease during one operation. On success, progress reaches `1.0` before the terminal result. Progress is an estimate of loader work: only the terminal result determines the outcome, so progress reaching `1.0` alone does not mean success. Every accepted operation emits exactly one typed terminal result. Rejected requests emit no load lifecycle events. `get_loaded_resource(path)` remains as a compatibility helper and consumes the ready resource; new integrations should use the resource in the typed result context.
 
 ```gdscript
 extends Node
@@ -96,9 +96,7 @@ var _current_level: Node = null
 
 func _ready() -> void:
     TtpGuiApi.level_load_started.connect(_on_level_load_started)
-    TtpGuiApi.level_load_completed.connect(_on_level_load_completed)
-    TtpGuiApi.level_load_failed.connect(_on_level_load_failed)
-    TtpGuiApi.level_load_cancelled.connect(_on_level_load_cancelled)
+    TtpGuiApi.level_load_result.connect(_on_level_load_result)
     TtpGuiApi.action_rejected.connect(_on_action_rejected)
     TtpGuiApi.configure_levels({
         "forest": {
@@ -115,57 +113,52 @@ func _on_level_load_started(operation_id: int, _level_data: Dictionary) -> void:
     _pending_operation_id = operation_id
     # Show the host game's loading UI.
 
-func _on_level_load_completed(operation_id: int, level_data: Dictionary, resource: Resource) -> void:
-    if operation_id != _pending_operation_id:
+func _on_level_load_result(result: MetaPlayResult) -> void:
+    if result.operation_id != _pending_operation_id:
         return
-    var packed_scene: PackedScene = resource as PackedScene
-    if packed_scene == null:
-        _pending_operation_id = 0
-        TtpGuiApi.request_home_screen()
-        return
-    var level: Node = packed_scene.instantiate() as Node
-    if level == null:
-        _pending_operation_id = 0
-        TtpGuiApi.request_home_screen()
-        return
-    if level.has_method("configure"):
-        var configured: Variant = level.call("configure", level_data.get("key"), self)
-        if configured is bool and not configured:
-            level.free()
+    var context: Dictionary = result.context
+    match result.status:
+        MetaPlayResult.Status.COMPLETED:
+            var level_data: Dictionary = context.get("level_data", {}) as Dictionary
+            var resource: Resource = context.get("resource") as Resource
+            var packed_scene: PackedScene = resource as PackedScene
+            if packed_scene == null:
+                _pending_operation_id = 0
+                TtpGuiApi.request_home_screen()
+                return
+            var level: Node = packed_scene.instantiate() as Node
+            if level == null:
+                _pending_operation_id = 0
+                TtpGuiApi.request_home_screen()
+                return
+            if level.has_method("configure"):
+                var configured: Variant = level.call("configure", level_data.get("key"), self)
+                if configured is bool and not configured:
+                    level.free()
+                    _pending_operation_id = 0
+                    TtpGuiApi.request_home_screen()
+                    return
+            add_child(level)
+            if level.has_method("start_level"):
+                var started: Variant = level.call("start_level")
+                if started is bool and not started:
+                    if level.has_method("stop_level"):
+                        level.call("stop_level")
+                    remove_child(level)
+                    level.queue_free()
+                    _pending_operation_id = 0
+                    TtpGuiApi.request_home_screen()
+                    return
+            if _current_level != null and is_instance_valid(_current_level):
+                remove_child(_current_level)
+                _current_level.queue_free()
+            level.name = "CurrentLevel"
+            _current_level = level
+            _pending_operation_id = 0
+            # Present gameplay in the host UI.
+        MetaPlayResult.Status.FAILED, MetaPlayResult.Status.CANCELLED:
             _pending_operation_id = 0
             TtpGuiApi.request_home_screen()
-            return
-    add_child(level)
-    if level.has_method("start_level"):
-        var started: Variant = level.call("start_level")
-        if started is bool and not started:
-            if level.has_method("stop_level"):
-                level.call("stop_level")
-            remove_child(level)
-            level.queue_free()
-            _pending_operation_id = 0
-            TtpGuiApi.request_home_screen()
-            return
-    if _current_level != null and is_instance_valid(_current_level):
-        remove_child(_current_level)
-        _current_level.queue_free()
-    level.name = "CurrentLevel"
-    _current_level = level
-    _pending_operation_id = 0
-    # Present gameplay in the host UI.
-
-func _on_level_load_failed(operation_id: int, _level_data: Dictionary, message: String) -> void:
-    if operation_id != _pending_operation_id:
-        return
-    _pending_operation_id = 0
-    push_warning("Level load %d failed: %s" % [operation_id, message])
-    TtpGuiApi.request_home_screen()
-
-func _on_level_load_cancelled(operation_id: int, _level_data: Dictionary) -> void:
-    if operation_id != _pending_operation_id:
-        return
-    _pending_operation_id = 0
-    TtpGuiApi.request_home_screen()
 
 func _on_action_rejected(message: String) -> void:
     push_warning(message)
@@ -190,9 +183,10 @@ The level-completion call records best stars and score, grants the configured se
 | --- | --- |
 | `level_load_started(operation_id, level_data)` | An accepted load began. The ID is unique and increasing for the lifetime of the API node. |
 | `loading_progress_changed(operation_id, progress)` | Normalized, non-decreasing progress in `0.0..1.0` for the identified active operation; progress is not a terminal result. |
-| `level_load_completed(operation_id, level_data, resource)` | Terminal success: the requested resource became ready. `resource` is the exact resource for this operation. |
-| `level_load_failed(operation_id, level_data, message)` | Terminal failure: resource loading failed; never emitted together with success for the same ID. |
-| `level_load_cancelled(operation_id, level_data)` | Terminal cancellation after `cancel_level_load(operation_id)` or when the API node exits the tree during an active load. |
+| `level_load_result(result)` | Typed terminal outcome (`COMPLETED`, `FAILED`, or `CANCELLED`) with correlated ID and structured context. Failure code `level.load_failed` is stable; `message` is presentation-only. |
+| `level_load_completed(operation_id, level_data, resource)` | Legacy terminal success event, emitted alongside `level_load_result`. |
+| `level_load_failed(operation_id, level_data, message)` | Legacy terminal failure event, emitted alongside `level_load_result`. |
+| `level_load_cancelled(operation_id, level_data)` | Legacy cancellation event, emitted alongside `level_load_result` after explicit cancellation or API shutdown. |
 | `level_load_exit_animation_completed(operation_id)` | The demo-compatible exit transition finished after successful resource loading. |
 | `navigation_requested(screen_name, payload)` | A screen transition is requested (`home`, `game`, `levels`, `store`, `settings`, `win`, or `lose`). |
 | `action_rejected(message)` | A requested action or load could not be completed. |

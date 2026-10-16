@@ -9,6 +9,7 @@ const RESULT_CODE_LEVEL_NOT_FOUND: StringName = &"level.not_found"
 const RESULT_CODE_LEVEL_LOCKED: StringName = &"level.locked"
 const RESULT_CODE_LEVEL_SCENE_PATH_MISSING: StringName = &"level.scene_path_missing"
 const RESULT_CODE_LEVEL_LOAD_IN_PROGRESS: StringName = &"level.load_in_progress"
+const RESULT_CODE_LEVEL_LOAD_FAILED: StringName = &"level.load_failed"
 const RESULT_CODE_NO_AVAILABLE_LEVEL: StringName = &"level.no_available_level"
 const RESULT_CODE_PROGRESSION_REJECTED: StringName = &"progression.rejected"
 
@@ -16,6 +17,7 @@ signal level_load_started(operation_id: int, level_data: Dictionary)
 signal level_load_completed(operation_id: int, level_data: Dictionary, resource: Resource)
 signal level_load_failed(operation_id: int, level_data: Dictionary, message: String)
 signal level_load_cancelled(operation_id: int, level_data: Dictionary)
+signal level_load_result(result: MetaPlayResult)
 signal level_load_exit_animation_completed(operation_id: int)
 signal loading_progress_changed(operation_id: int, progress: float)
 signal navigation_requested(screen_name: String, payload: Dictionary)
@@ -84,6 +86,7 @@ var _active_load_progress: float = 0.0
 var _active_load_progress_emitted: bool = false
 var _pending_cancelled_operation_id: int = 0
 var _pending_cancelled_level_data: Dictionary = {}
+var _pending_cancelled_scene_path: String = ""
 
 
 func _ready() -> void:
@@ -194,8 +197,12 @@ func request_initial_level_load() -> Dictionary:
 
 
 func request_level_load(level_key: Variant) -> bool:
-	var result: MetaPlayResult = _start_level_load_operation(level_key)
+	var result: MetaPlayResult = request_level_load_result(level_key)
 	return result.status == MetaPlayResult.Status.ACCEPTED
+
+
+func request_level_load_result(level_key: Variant) -> MetaPlayResult:
+	return _start_level_load_operation(level_key)
 
 
 func _start_level_load_operation(level_key: Variant) -> MetaPlayResult:
@@ -269,6 +276,7 @@ func _finish_active_load_as_cancelled() -> void:
 		return
 	var operation_id: int = _active_load_operation_id
 	var level_data: Dictionary = _loading_level.duplicate(true)
+	var scene_path: String = _loading_path
 	_load_request_active = false
 	_active_load_operation_id = 0
 	_load_terminal_emitting = true
@@ -278,7 +286,13 @@ func _finish_active_load_as_cancelled() -> void:
 	if _load_start_signals_emitting:
 		_pending_cancelled_operation_id = operation_id
 		_pending_cancelled_level_data = level_data
+		_pending_cancelled_scene_path = scene_path
 		return
+	level_load_result.emit(MetaPlayResult.cancelled(operation_id, {
+		"level_key": level_data.get("key"),
+		"level_data": level_data,
+		"scene_path": scene_path,
+	}))
 	level_load_cancelled.emit(operation_id, level_data)
 	_load_terminal_emitting = false
 
@@ -286,8 +300,15 @@ func _finish_active_load_as_cancelled() -> void:
 func _emit_pending_load_cancelled() -> void:
 	var operation_id: int = _pending_cancelled_operation_id
 	var level_data: Dictionary = _pending_cancelled_level_data.duplicate(true)
+	var scene_path: String = _pending_cancelled_scene_path
 	_pending_cancelled_operation_id = 0
 	_pending_cancelled_level_data.clear()
+	_pending_cancelled_scene_path = ""
+	level_load_result.emit(MetaPlayResult.cancelled(operation_id, {
+		"level_key": level_data.get("key"),
+		"level_data": level_data,
+		"scene_path": scene_path,
+	}))
 	level_load_cancelled.emit(operation_id, level_data)
 	_load_terminal_emitting = false
 
@@ -519,6 +540,12 @@ func _on_batch_finished() -> void:
 	_load_request_active = false
 	_active_load_operation_id = 0
 	_load_terminal_emitting = true
+	level_load_result.emit(MetaPlayResult.completed(operation_id, {
+		"level_key": level_data.get("key"),
+		"level_data": level_data,
+		"scene_path": _loading_path,
+		"resource": resource,
+	}))
 	level_load_completed.emit(operation_id, level_data, resource)
 	loading_completed.emit(operation_id, level_data, resource)
 	_load_terminal_emitting = false
@@ -530,7 +557,7 @@ func _emit_loading_exit(operation_id: int) -> void:
 	loading_exit_animation_completed.emit(operation_id)
 
 
-func _on_batch_failed(_path: String, message: String) -> void:
+func _on_batch_failed(path: String, message: String) -> void:
 	if not _load_request_active:
 		return
 	var operation_id: int = _active_load_operation_id
@@ -539,6 +566,12 @@ func _on_batch_failed(_path: String, message: String) -> void:
 	_load_request_active = false
 	_active_load_operation_id = 0
 	_load_terminal_emitting = true
+	level_load_result.emit(MetaPlayResult.failed(operation_id, RESULT_CODE_LEVEL_LOAD_FAILED, {
+		"level_key": level_data.get("key"),
+		"level_data": level_data,
+		"scene_path": path,
+		"message": message,
+	}))
 	level_load_failed.emit(operation_id, level_data, message)
 	_load_terminal_emitting = false
 	_reject(message)
