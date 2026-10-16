@@ -140,40 +140,71 @@ func get_store_item(item_path: Array) -> Dictionary:
 func purchase_game_item(item_path: Array) -> Dictionary:
 	var item: Dictionary = get_store_item(item_path)
 	if item.is_empty():
-		return {"ok": false, "message": "Artículo inexistente."}
+		return _store_failure(&"store.item_not_found", "Artículo inexistente.", {"item_path": item_path.duplicate(true)})
 	if bool(item.get("bought", false)):
-		return {"ok": false, "message": "Ya lo tienes."}
+		return _store_failure(&"store.item_already_owned", "Ya lo tienes.", {"item_path": item_path.duplicate(true)})
 	var cost: int = _parse_price(item.get("price", 0))
 	if cost > coins:
-		return {"ok": false, "message": "No tienes monedas suficientes.", "cost": cost}
+		return _store_failure(
+			&"wallet.insufficient_funds",
+			"No tienes monedas suficientes.",
+			{"item_path": item_path.duplicate(true), "cost": cost, "balance": coins}
+		)
 	set_coins(coins - cost)
 	_set_item_fields(item_path, {"bought": true})
 	store_changed.emit()
-	return {"ok": true, "message": "Compra completada.", "cost": cost, "coins": coins}
+	return {
+		"ok": true,
+		"message": "Compra completada.",
+		"cost": cost,
+		"coins": coins,
+		"item_path": item_path.duplicate(true),
+		"item": get_store_item(item_path),
+	}
 
 
 func equip_item(item_path: Array) -> Dictionary:
 	var item: Dictionary = get_store_item(item_path)
 	if item.is_empty():
-		return {"ok": false, "message": "Artículo inexistente."}
+		return _store_failure(&"store.item_not_found", "Artículo inexistente.", {"item_path": item_path.duplicate(true)})
 	if not bool(item.get("bought", false)):
-		return {"ok": false, "message": "Compra el artículo antes de equiparlo."}
+		return _store_failure(&"store.item_not_owned", "Compra el artículo antes de equiparlo.", {"item_path": item_path.duplicate(true)})
 	if not item.has("load"):
-		return {"ok": false, "message": "Este artículo no se puede equipar."}
+		return _store_failure(&"store.item_not_equippable", "Este artículo no se puede equipar.", {"item_path": item_path.duplicate(true)})
 	var group_name: String = str(item.get("group", ""))
 	if not group_name.is_empty():
 		_clear_equipped_group(group_name)
 	_set_item_fields(item_path, {"load": true})
 	store_changed.emit()
-	return {"ok": true, "message": "Artículo equipado.", "item": item_path.duplicate()}
+	return {
+		"ok": true,
+		"message": "Artículo equipado.",
+		"item_path": item_path.duplicate(true),
+		"item": get_store_item(item_path),
+	}
 
 
 func add_currency_product(product_key: Variant) -> Dictionary:
 	if not coin_values.has(product_key):
-		return {"ok": false, "message": "Paquete monetario inexistente."}
+		return _store_failure(&"currency.product_not_found", "Paquete monetario inexistente.", {"product_key": product_key})
 	var amount: int = maxi(0, int(coin_values[product_key]))
 	add_coins(amount)
-	return {"ok": true, "message": "+%s monedas" % format_number(amount), "coins": coins}
+	return {
+		"ok": true,
+		"message": "+%s monedas" % format_number(amount),
+		"coins": coins,
+		"coins_added": amount,
+		"product_key": product_key,
+	}
+
+
+func _store_failure(code: StringName, message: String, context: Dictionary) -> Dictionary:
+	return {
+		"ok": false,
+		"code": code,
+		"message": message,
+		"context": context.duplicate(true),
+	}
 
 
 func toggle_sfx() -> bool:

@@ -12,6 +12,12 @@ const RESULT_CODE_LEVEL_LOAD_IN_PROGRESS: StringName = &"level.load_in_progress"
 const RESULT_CODE_LEVEL_LOAD_FAILED: StringName = &"level.load_failed"
 const RESULT_CODE_NO_AVAILABLE_LEVEL: StringName = &"level.no_available_level"
 const RESULT_CODE_PROGRESSION_REJECTED: StringName = &"progression.rejected"
+const RESULT_CODE_STORE_ITEM_NOT_FOUND: StringName = &"store.item_not_found"
+const RESULT_CODE_STORE_ITEM_ALREADY_OWNED: StringName = &"store.item_already_owned"
+const RESULT_CODE_STORE_ITEM_NOT_OWNED: StringName = &"store.item_not_owned"
+const RESULT_CODE_STORE_ITEM_NOT_EQUIPPABLE: StringName = &"store.item_not_equippable"
+const RESULT_CODE_WALLET_INSUFFICIENT_FUNDS: StringName = &"wallet.insufficient_funds"
+const RESULT_CODE_CURRENCY_PRODUCT_NOT_FOUND: StringName = &"currency.product_not_found"
 
 signal level_load_started(operation_id: int, level_data: Dictionary)
 signal level_load_completed(operation_id: int, level_data: Dictionary, resource: Resource)
@@ -453,33 +459,49 @@ func toggle_music() -> void:
 	modal_config_change_music_status.emit()
 
 
-func purchase_item(item_path: Array) -> void:
+func purchase_item(item_path: Array) -> MetaPlayResult:
 	var result: Dictionary = _model.purchase_game_item(item_path)
 	if bool(result.get("ok", false)):
 		var path_copy: Array = item_path.duplicate(true)
 		item_purchased.emit(path_copy)
 		store_game_buy_item.emit(path_copy)
-	else:
-		_reject(str(result.get("message", "Could not purchase item.")))
+		return MetaPlayResult.completed(0, {
+			"item_path": path_copy,
+			"item": result.get("item", {}),
+			"cost": int(result.get("cost", 0)),
+			"currency_balance": int(result.get("coins", _model.coins)),
+		})
+	return _reject_store_result(result, RESULT_CODE_STORE_ITEM_NOT_FOUND, "Could not purchase item.")
 
 
-func equip_item(item_path: Array) -> void:
+func equip_item(item_path: Array) -> MetaPlayResult:
 	var result: Dictionary = _model.equip_item(item_path)
 	if bool(result.get("ok", false)):
 		var path_copy: Array = item_path.duplicate(true)
 		item_equipped.emit(path_copy)
 		store_game_update_item_loadded.emit(path_copy)
-	else:
-		_reject(str(result.get("message", "Could not equip item.")))
+		return MetaPlayResult.completed(0, {
+			"item_path": path_copy,
+			"item": result.get("item", {}),
+		})
+	return _reject_store_result(result, RESULT_CODE_STORE_ITEM_NOT_FOUND, "Could not equip item.")
 
 
-func credit_currency_product(product_key: Variant) -> void:
+func credit_currency_product(product_key: Variant) -> MetaPlayResult:
 	var result: Dictionary = _model.add_currency_product(product_key)
 	if bool(result.get("ok", false)):
 		currency_product_credited.emit(product_key)
 		store_currency_buy_coins.emit(product_key)
-	else:
-		_reject(str(result.get("message", "Could not credit currency product.")))
+		return MetaPlayResult.completed(0, {
+			"product_key": product_key,
+			"currency_added": int(result.get("coins_added", 0)),
+			"currency_balance": int(result.get("coins", _model.coins)),
+		})
+	return _reject_store_result(
+		result,
+		RESULT_CODE_CURRENCY_PRODUCT_NOT_FOUND,
+		"Could not credit currency product."
+	)
 
 
 func _request_screen(screen_name: String) -> void:
@@ -504,6 +526,18 @@ func _reject_with_result(
 	) -> MetaPlayResult:
 	_reject(message)
 	return MetaPlayResult.rejected(code, context)
+
+
+func _reject_store_result(
+		model_result: Dictionary,
+		fallback_code: StringName,
+		fallback_message: String
+	) -> MetaPlayResult:
+	var code: StringName = StringName(str(model_result.get("code", fallback_code)))
+	var message: String = str(model_result.get("message", fallback_message))
+	var raw_context: Variant = model_result.get("context", {})
+	var context: Dictionary = raw_context.duplicate(true) if raw_context is Dictionary else {}
+	return _reject_with_result(code, message, context)
 
 
 func _on_coins_changed(total: int) -> void:
