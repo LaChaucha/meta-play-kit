@@ -68,21 +68,21 @@ A level entry uses `name`, `max_score`, `max_stars`, `scene_path`, and `enabled`
 | Purpose | Public methods |
 | --- | --- |
 | Configure session data | `configure_levels`, `configure_settings`, `configure_items`, `configure_currency_products`, `configure_currency_rewards`, `set_currency_balance` |
-| Load and progress | `request_initial_level_load`, `request_level_load(key)`, `cancel_level_load(operation_id)`, `select_level(key)`, `complete_level(key, stars, score, reward_currency, next_level_key)`, `report_level_loss(key)`, `retry_level(key)`, `load_next_level()` |
+| Load and progress | `request_initial_level_load`, `request_level_load(key) -> bool`, `cancel_level_load(operation_id)`, `select_level(key) -> MetaPlayResult`, `complete_level(key, stars, score, reward_currency, next_level_key) -> MetaPlayResult`, `report_level_loss(key)`, `retry_level(key) -> MetaPlayResult`, `load_next_level() -> MetaPlayResult` |
 | Store and wallet | `purchase_item(path)`, `equip_item(path)`, `credit_currency_product(product_key)` |
 | Settings and rewards | `toggle_sfx`, `toggle_music`, `revive_after_reward(key)`, `claim_reward_doubling(extra_currency)`, `use_life()` |
-| Navigation | `request_home_screen`, `request_level_selection_screen`, `request_store_screen`, `request_settings_screen`, `start_or_resume_game` |
+| Navigation | `request_home_screen`, `request_level_selection_screen`, `request_store_screen`, `request_settings_screen`, `start_or_resume_game() -> MetaPlayResult` |
 | Read level/session state | `get_level(key)`, `get_levels`, `get_enabled_level_keys`, `get_next_available_level` |
 | Read store/settings state | `get_settings`, `get_items`, `get_item(path)`, `get_currency_products`, `get_currency_balance`, `get_item_type_values` |
 | Loading/presentation helpers | `get_loaded_resource(path)`, `is_loading`, `format_number(value)` |
 
-`start_or_resume_game()` requests loading of the next available level. Gameplay is presented by the host after the load completes and a valid level instance is created. `request_level_load()` returns `true` when the request is accepted and `false` when it is rejected; rejection details are emitted through `action_rejected`. Only one load request can be active at a time, and direct requests as well as `select_level()` reject locked levels and levels without a scene path. `select_level()`, retry, next-level, and play-request signals are emitted only after their load request is accepted. `complete_level()` records progress and requests the `win` screen. The host owns stopping/pausing its gameplay node and deciding how to persist session state.
+`complete_level()` returns `MetaPlayResult.Status.COMPLETED` after applying progress and rewards, or `REJECTED` with a stable code when it cannot apply the completion. `select_level()`, `retry_level()`, `load_next_level()`, and `start_or_resume_game()` return `ACCEPTED` with the load operation ID only after a load request starts; otherwise they return `REJECTED`. The accepted command result describes request admission, not the later scene-load outcome: observe `level_load_completed`, `level_load_failed`, or `level_load_cancelled` for that lifecycle. Direct `request_level_load()` still returns `bool` in this story; its typed terminal-result migration remains separate. Rejection codes include `level.not_found`, `level.locked`, `level.scene_path_missing`, `level.load_in_progress`, and `level.no_available_level`. Legacy `action_rejected` messages continue to emit during migration. Gameplay is presented by the host after the load completes and a valid level instance is created. The host owns stopping/pausing its gameplay node and deciding how to persist session state.
 
 ### Typed operation results
 
-`MetaPlayResult` is the shared typed result contract for the gradual migration of facade commands. Its `status` is one of `ACCEPTED`, `COMPLETED`, `REJECTED`, `FAILED`, or `CANCELLED`; `code` is a stable `StringName` for rejected or failed outcomes; `operation_id` correlates asynchronous acceptance with its terminal result; and `context` carries structured details as a defensive deep copy. Accepted, successful, and cancelled outcomes have no error code. Synchronous results use operation ID `0`; accepted, failed, and cancelled asynchronous results require a positive ID. Create results with `MetaPlayResult.accepted()`, `completed()`, `rejected()`, `failed()`, and `cancelled()` so these invariants are checked.
+`MetaPlayResult` is the shared typed result contract for the gradual migration of facade commands. Its `status` is one of `ACCEPTED`, `COMPLETED`, `REJECTED`, `FAILED`, or `CANCELLED`; `code` is a stable `StringName` for rejected or failed outcomes; `operation_id` correlates asynchronous acceptance with its terminal result; and `context` carries structured details as a defensive deep copy. Accepted, successful, and cancelled outcomes have no error code. Synchronous results use operation ID `0`; accepted, failed, and cancelled asynchronous results require a positive ID. Create results with `MetaPlayResult.accepted()`, `completed()`, `rejected()`, `failed()`, and `cancelled()` so these invariants are checked. Progression facade commands now return this type; store commands and typed terminal load results will migrate in follow-up stories.
 
-This story introduces the common result type and its invariants. Existing `TtpGuiApi` command signatures and legacy message signals have not been migrated yet; each command family will adopt `MetaPlayResult` in its follow-up story. Until then, use the signatures documented in the command table and loading integration section above.
+Progression rejections also continue to emit the legacy `action_rejected` and `operation_rejected` message signals for existing consumers. New integrations should handle the returned result and avoid processing the same rejection again through a legacy signal. The load terminal signals keep their current signatures until their separate migration story; use the operation ID on the accepted progression result to correlate that existing load lifecycle.
 
 ### Loading integration
 
@@ -176,7 +176,9 @@ func _on_action_rejected(message: String) -> void:
 ### Report gameplay results
 
 ```gdscript
-TtpGuiApi.complete_level("forest", 3, 1250, 120, "cave")
+var completion: MetaPlayResult = TtpGuiApi.complete_level("forest", 3, 1250, 120, "cave")
+if completion.status == MetaPlayResult.Status.REJECTED:
+    push_warning("Level completion was rejected: %s" % completion.code)
 TtpGuiApi.report_level_loss("forest")
 ```
 

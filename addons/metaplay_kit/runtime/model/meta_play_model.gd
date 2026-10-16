@@ -96,7 +96,11 @@ func complete_level(
 		next_level_key: Variant
 	) -> Dictionary:
 	if not levels.has(level_key):
-		return {"ok": false, "message": "Nivel inexistente."}
+		return {
+			"ok": false,
+			"code": &"level.not_found",
+			"message": "Nivel inexistente.",
+		}
 	var level: Dictionary = get_level(level_key)
 	level["max_stars"] = maxi(int(level.get("max_stars", 0)), clampi(stars, 0, 3))
 	level["max_score"] = maxi(int(level.get("max_score", 0)), maxi(0, score))

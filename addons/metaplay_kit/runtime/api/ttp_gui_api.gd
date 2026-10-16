@@ -4,6 +4,13 @@ extends Node
 ## query read-only snapshots, and subscribe to events without accessing internals.
 
 const LEVEL_LOAD_BUSY_MESSAGE: String = "A level load is already in progress."
+const RESULT_CODE_API_UNAVAILABLE: StringName = &"api.unavailable"
+const RESULT_CODE_LEVEL_NOT_FOUND: StringName = &"level.not_found"
+const RESULT_CODE_LEVEL_LOCKED: StringName = &"level.locked"
+const RESULT_CODE_LEVEL_SCENE_PATH_MISSING: StringName = &"level.scene_path_missing"
+const RESULT_CODE_LEVEL_LOAD_IN_PROGRESS: StringName = &"level.load_in_progress"
+const RESULT_CODE_NO_AVAILABLE_LEVEL: StringName = &"level.no_available_level"
+const RESULT_CODE_PROGRESSION_REJECTED: StringName = &"progression.rejected"
 
 signal level_load_started(operation_id: int, level_data: Dictionary)
 signal level_load_completed(operation_id: int, level_data: Dictionary, resource: Resource)
@@ -187,22 +194,39 @@ func request_initial_level_load() -> Dictionary:
 
 
 func request_level_load(level_key: Variant) -> bool:
+	var result: MetaPlayResult = _start_level_load_operation(level_key)
+	return result.status == MetaPlayResult.Status.ACCEPTED
+
+
+func _start_level_load_operation(level_key: Variant) -> MetaPlayResult:
 	if _is_shutting_down:
-		return false
+		return MetaPlayResult.rejected(RESULT_CODE_API_UNAVAILABLE, {"level_key": level_key})
 	if _load_request_active or _load_terminal_emitting:
-		_reject(LEVEL_LOAD_BUSY_MESSAGE)
-		return false
+		return _reject_with_result(
+			RESULT_CODE_LEVEL_LOAD_IN_PROGRESS,
+			LEVEL_LOAD_BUSY_MESSAGE,
+			{"level_key": level_key}
+		)
 	var level: Dictionary = get_level(level_key)
 	if level.is_empty():
-		_reject("The requested level does not exist.")
-		return false
+		return _reject_with_result(
+			RESULT_CODE_LEVEL_NOT_FOUND,
+			"The requested level does not exist.",
+			{"level_key": level_key}
+		)
 	if not bool(level.get("enabled", false)):
-		_reject("The requested level is locked or unavailable.")
-		return false
+		return _reject_with_result(
+			RESULT_CODE_LEVEL_LOCKED,
+			"The requested level is locked or unavailable.",
+			{"level_key": level_key}
+		)
 	var scene_path: String = str(level.get("scene_path", "")).strip_edges()
 	if scene_path.is_empty():
-		_reject("The requested level does not have a scene path.")
-		return false
+		return _reject_with_result(
+			RESULT_CODE_LEVEL_SCENE_PATH_MISSING,
+			"The requested level does not have a scene path.",
+			{"level_key": level_key}
+		)
 	_loading_level = level
 	_loading_level["key"] = level_key
 	_loading_path = scene_path
@@ -213,21 +237,24 @@ func request_level_load(level_key: Variant) -> bool:
 	_load_request_active = true
 	var level_data: Dictionary = _loading_level.duplicate(true)
 	var operation_id: int = _active_load_operation_id
+	var accepted_result: MetaPlayResult = MetaPlayResult.accepted(
+		operation_id, {"level_key": level_key, "scene_path": scene_path}
+	)
 	_load_start_signals_emitting = true
 	level_load_started.emit(operation_id, level_data)
 	loading_started.emit(operation_id, level_data)
 	_load_start_signals_emitting = false
 	if _pending_cancelled_operation_id == operation_id:
 		_emit_pending_load_cancelled()
-		return true
+		return accepted_result
 	if not _load_request_active or _active_load_operation_id != operation_id or _is_shutting_down:
-		return true
+		return accepted_result
 	_on_loading_progress(0.0)
 	if not _load_request_active or _active_load_operation_id != operation_id or _is_shutting_down:
-		return true
+		return accepted_result
 	_resource_batch.add_resource_to_batch(_loading_path)
 	_resource_batch.start_loading(24)
-	return true
+	return accepted_result
 
 
 func cancel_level_load(operation_id: int) -> bool:
@@ -271,13 +298,19 @@ func complete_level(
 		score: int,
 		reward_currency: int,
 		next_level_key: Variant = null
-	) -> void:
+	) -> MetaPlayResult:
 	var result: Dictionary = _model.complete_level(
 		level_key, stars, score, reward_currency, next_level_key
 	)
 	if not bool(result.get("ok", false)):
-		_reject(str(result.get("message", "Could not record level completion.")))
-		return
+		var failure_code: StringName = StringName(
+			str(result.get("code", RESULT_CODE_PROGRESSION_REJECTED))
+		)
+		return _reject_with_result(
+			failure_code,
+			str(result.get("message", "Could not record level completion.")),
+			{"level_key": level_key}
+		)
 	_emit_navigation("win", {
 		"level_key": level_key,
 		"stars": clampi(stars, 0, 3),
@@ -285,30 +318,43 @@ func complete_level(
 		"coins": maxi(0, reward_currency),
 		"next_level": next_level_key,
 	})
+	return MetaPlayResult.completed(0, {
+		"level_key": level_key,
+		"stars": clampi(stars, 0, 3),
+		"score": maxi(0, score),
+		"reward_currency": maxi(0, reward_currency),
+		"currency_balance": int(result.get("coins", _model.coins)),
+		"next_level_key": next_level_key,
+	})
 
 
 func report_level_loss(level_key: Variant) -> void:
 	_emit_navigation("lose", {"level_key": level_key})
 
 
-func retry_level(level_key: Variant) -> void:
+func retry_level(level_key: Variant) -> MetaPlayResult:
+	var result: MetaPlayResult = _start_level_load_operation(level_key)
+	if result.status != MetaPlayResult.Status.ACCEPTED:
+		return result
 	var level: Dictionary = get_level(level_key)
-	if level.is_empty():
-		return
-	if not request_level_load(level_key):
-		return
 	level_retry_requested.emit(level)
+	return result
 
 
-func load_next_level() -> void:
+func load_next_level() -> MetaPlayResult:
 	var next_key: Variant = get_next_available_level()
+	if next_key == null:
+		return _reject_with_result(
+			RESULT_CODE_NO_AVAILABLE_LEVEL,
+			"No level is available to advance to."
+		)
+	var result: MetaPlayResult = _start_level_load_operation(next_key)
+	if result.status != MetaPlayResult.Status.ACCEPTED:
+		return result
 	var level: Dictionary = get_level(next_key)
-	if level.is_empty():
-		return
-	if not request_level_load(next_key):
-		return
 	next_level_load_requested.emit(level)
 	modal_win_load_next_level_pressed.emit(level)
+	return result
 
 
 func revive_after_reward(level_key: Variant) -> void:
@@ -349,25 +395,29 @@ func request_settings_screen() -> void:
 	_request_screen("settings")
 
 
-func start_or_resume_game() -> void:
+func start_or_resume_game() -> MetaPlayResult:
 	var level_key: Variant = get_next_available_level()
 	if level_key == null:
-		return
-	if not request_level_load(level_key):
-		return
+		return _reject_with_result(
+			RESULT_CODE_NO_AVAILABLE_LEVEL,
+			"No level is available to start or resume."
+		)
+	var result: MetaPlayResult = _start_level_load_operation(level_key)
+	if result.status != MetaPlayResult.Status.ACCEPTED:
+		return result
 	play_requested.emit()
 	home_tap_to_play_pressed.emit()
+	return result
 
 
-func select_level(level_key: Variant) -> void:
+func select_level(level_key: Variant) -> MetaPlayResult:
+	var result: MetaPlayResult = _start_level_load_operation(level_key)
+	if result.status != MetaPlayResult.Status.ACCEPTED:
+		return result
 	var level: Dictionary = get_level(level_key)
-	if level.is_empty() or not bool(level.get("enabled", false)):
-		_reject("The selected level is locked or unavailable.")
-		return
-	if not request_level_load(level_key):
-		return
 	level_selected.emit(level)
 	level_selector_load_new_level_selected.emit(level)
+	return result
 
 
 func toggle_sfx() -> void:
@@ -424,6 +474,15 @@ func _emit_navigation(screen_name: String, payload: Dictionary) -> void:
 func _reject(message: String) -> void:
 	action_rejected.emit(message)
 	operation_rejected.emit(message)
+
+
+func _reject_with_result(
+		code: StringName,
+		message: String,
+		context: Dictionary = {}
+	) -> MetaPlayResult:
+	_reject(message)
+	return MetaPlayResult.rejected(code, context)
 
 
 func _on_coins_changed(total: int) -> void:
