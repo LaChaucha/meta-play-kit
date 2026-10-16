@@ -29,7 +29,6 @@ var _store_mode: String = "game"
 var _result_payload: Dictionary = {}
 var _initial_boot: bool = true
 var _current_level_node: Node = null
-var _loading_level_key: Variant = null
 var _loading_operation_id: int = 0
 
 
@@ -55,19 +54,13 @@ func show_home() -> void:
 	get_tree().paused = false
 	_close_dialog()
 	_loading.complete_loading()
-	_loading_level_key = null
 	_initial_boot = false
 	_home_screen.visible = true
 	_game_screen.visible = false
 	_update_coins(TtpGuiApi.get_currency_balance())
 
 
-func show_level(first_level_to_play: Dictionary) -> bool:
-	var scene_path: String = str(first_level_to_play.get("scene_path", ""))
-	if scene_path.is_empty():
-		_on_operation_rejected("El nivel no tiene una escena configurada.")
-		return false
-	var resource: Resource = TtpGuiApi.get_loaded_resource(scene_path)
+func show_level(level_data: Dictionary, resource: Resource) -> bool:
 	var packed_scene: PackedScene = resource as PackedScene
 	if packed_scene == null:
 		_on_operation_rejected("No se pudo instanciar el nivel cargado.")
@@ -76,12 +69,30 @@ func show_level(first_level_to_play: Dictionary) -> bool:
 	if level_node == null:
 		_on_operation_rejected("No se pudo crear la instancia del nivel.")
 		return false
+	var level_key: Variant = level_data.get("key", _current_level_key)
 	if level_node.has_method("configure"):
-		level_node.call("configure", first_level_to_play.get("key", _current_level_key), self)
-	set_current_level(level_node)
-	_current_level_key = first_level_to_play.get("key", _current_level_key)
+		var configuration_result: Variant = level_node.call("configure", level_key, self)
+		if configuration_result is bool and not configuration_result:
+			level_node.free()
+			_on_operation_rejected("No se pudo configurar el nivel.")
+			return false
+	level_node.name = "PendingLevel"
+	add_child(level_node)
 	if level_node.has_method("start_level"):
-		level_node.call("start_level")
+		var start_result: Variant = level_node.call("start_level")
+		if start_result is bool and not start_result:
+			if level_node.has_method("stop_level"):
+				level_node.call("stop_level")
+			remove_child(level_node)
+			level_node.queue_free()
+			_on_operation_rejected("No se pudo iniciar el nivel.")
+			return false
+	if is_instance_valid(_current_level_node):
+		remove_child(_current_level_node)
+		_current_level_node.queue_free()
+	level_node.name = "CurrentLevel"
+	_current_level_node = level_node
+	_current_level_key = level_key
 	return true
 
 
@@ -94,7 +105,8 @@ func set_current_level(level_node: Node) -> void:
 		remove_child(_current_level_node)
 		_current_level_node.queue_free()
 	level_node.name = "CurrentLevel"
-	add_child(level_node)
+	if level_node.get_parent() != self:
+		add_child(level_node)
 	_current_level_node = level_node
 
 
@@ -774,7 +786,6 @@ func _on_screen_requested(screen_name: String, payload: Dictionary) -> void:
 
 func _on_loading_started(operation_id: int, level_data: Dictionary) -> void:
 	_loading_operation_id = operation_id
-	_loading_level_key = level_data.get("key", _current_level_key)
 	get_tree().paused = false
 	if is_instance_valid(_current_level_node) and _current_level_node.has_method("stop_level"):
 		_current_level_node.call("stop_level")
@@ -789,14 +800,13 @@ func _on_loading_progress(operation_id: int, progress: float) -> void:
 	_loading.update_progress(progress)
 
 
-func _on_loading_completed(operation_id: int, level_data: Dictionary) -> void:
+func _on_loading_completed(operation_id: int, level_data: Dictionary, resource: Resource) -> void:
 	if operation_id != _loading_operation_id:
 		return
-	if not show_level(level_data):
+	_loading_operation_id = 0
+	if not show_level(level_data, resource):
 		show_home()
 		return
-	_loading_level_key = null
-	_loading_operation_id = 0
 	_loading.load_finished()
 	_loading.complete_loading()
 	if _initial_boot:

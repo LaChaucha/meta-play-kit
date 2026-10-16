@@ -80,14 +80,13 @@ A level entry uses `name`, `max_score`, `max_stars`, `scene_path`, and `enabled`
 
 ### Loading integration
 
-Connect before requesting the initial level. Every accepted request gets a monotonically increasing `operation_id`. The start, progress, and terminal signals carry that same ID, so a host can correlate events even when the same scene is requested repeatedly. Each accepted operation emits exactly one terminal result: `level_load_completed`, `level_load_failed`, or (when cancellation is implemented) `level_load_cancelled`. Rejected requests emit no load lifecycle events. `get_loaded_resource(path)` consumes the ready resource, so a second immediate read returns `null`.
+Connect before requesting the initial level. Every accepted request gets a monotonically increasing `operation_id`. The start, progress, and terminal signals carry that same ID, so a host can correlate events even when the same scene is requested repeatedly. Each accepted operation emits exactly one terminal result: `level_load_completed`, `level_load_failed`, or (when cancellation is implemented) `level_load_cancelled`. A successful completion includes the exact loaded `Resource` and level definition for that operation. Rejected requests emit no load lifecycle events. `get_loaded_resource(path)` remains as a compatibility helper and consumes the ready resource; new integrations should use the resource delivered by the completion signal.
 
 ```gdscript
 extends Node
 
-var _pending_path: String = ""
-var _pending_key: Variant = null
 var _pending_operation_id: int = 0
+var _current_level: Node = null
 
 func _ready() -> void:
     TtpGuiApi.level_load_started.connect(_on_level_load_started)
@@ -105,26 +104,48 @@ func _ready() -> void:
     })
     TtpGuiApi.request_initial_level_load()
 
-func _on_level_load_started(operation_id: int, level_data: Dictionary) -> void:
+func _on_level_load_started(operation_id: int, _level_data: Dictionary) -> void:
     _pending_operation_id = operation_id
-    _pending_path = str(level_data.get("scene_path", ""))
-    _pending_key = level_data.get("key")
     # Show the host game's loading UI.
 
-func _on_level_load_completed(operation_id: int, level_data: Dictionary) -> void:
+func _on_level_load_completed(operation_id: int, level_data: Dictionary, resource: Resource) -> void:
     if operation_id != _pending_operation_id:
         return
-    var packed_scene: PackedScene = TtpGuiApi.get_loaded_resource(_pending_path) as PackedScene
+    var packed_scene: PackedScene = resource as PackedScene
     if packed_scene == null:
+        _pending_operation_id = 0
         TtpGuiApi.request_home_screen()
         return
-    var level: Node = packed_scene.instantiate()
-    add_child(level)
+    var level: Node = packed_scene.instantiate() as Node
+    if level == null:
+        _pending_operation_id = 0
+        TtpGuiApi.request_home_screen()
+        return
     if level.has_method("configure"):
-        level.call("configure", _pending_key, self)
+        var configured: Variant = level.call("configure", level_data.get("key"), self)
+        if configured is bool and not configured:
+            level.free()
+            _pending_operation_id = 0
+            TtpGuiApi.request_home_screen()
+            return
+    add_child(level)
     if level.has_method("start_level"):
-        level.call("start_level")
-    # Replace the current level and present gameplay in the host UI.
+        var started: Variant = level.call("start_level")
+        if started is bool and not started:
+            if level.has_method("stop_level"):
+                level.call("stop_level")
+            remove_child(level)
+            level.queue_free()
+            _pending_operation_id = 0
+            TtpGuiApi.request_home_screen()
+            return
+    if _current_level != null and is_instance_valid(_current_level):
+        remove_child(_current_level)
+        _current_level.queue_free()
+    level.name = "CurrentLevel"
+    _current_level = level
+    _pending_operation_id = 0
+    # Present gameplay in the host UI.
 
 func _on_level_load_failed(operation_id: int, _level_data: Dictionary, message: String) -> void:
     if operation_id != _pending_operation_id:
@@ -137,7 +158,7 @@ func _on_action_rejected(message: String) -> void:
     push_warning(message)
 ```
 
-The methods `configure(key, host)`, `start_level()`, `stop_level()`, and `revive()` are conventions demonstrated by `demo/scripts/level.gd`, not requirements imposed on host scenes. Connect `loading_progress_changed(operation_id, progress)` to the host's progress UI if desired, and ignore progress whose ID is not the host's pending operation. A failed resource load emits `level_load_failed(operation_id, level_data, message)`, then `action_rejected(message)`, and requests the home screen. The cancellation terminal signal is reserved for the cancellation capability planned separately; this API version does not yet expose a cancellation request.
+The methods `configure(key, host)`, `start_level()`, `stop_level()`, and `revive()` are conventions demonstrated by `demo/scripts/level.gd`, not requirements imposed on host scenes. In the sample, returning `false` from `configure()` or `start_level()` rejects the candidate; legacy methods returning no value are treated as successful. Connect `loading_progress_changed(operation_id, progress)` to the host's progress UI if desired, and ignore progress whose ID is not the host's pending operation. A failed resource load emits `level_load_failed(operation_id, level_data, message)`, then `action_rejected(message)`, and requests the home screen. The cancellation terminal signal is reserved for the cancellation capability planned separately; this API version does not yet expose a cancellation request.
 
 ### Report gameplay results
 
@@ -154,7 +175,7 @@ The level-completion call records best stars and score, grants the configured se
 | --- | --- |
 | `level_load_started(operation_id, level_data)` | An accepted load began. The ID is unique and increasing for the lifetime of the API node. |
 | `loading_progress_changed(operation_id, progress)` | Progress for the identified active operation. |
-| `level_load_completed(operation_id, level_data)` | Terminal success: the requested resource became ready. |
+| `level_load_completed(operation_id, level_data, resource)` | Terminal success: the requested resource became ready. `resource` is the exact resource for this operation. |
 | `level_load_failed(operation_id, level_data, message)` | Terminal failure: resource loading failed; never emitted together with success for the same ID. |
 | `level_load_cancelled(operation_id, level_data)` | Reserved terminal outcome for the cancellation feature; no cancellation command is available yet. |
 | `level_load_exit_animation_completed(operation_id)` | The demo-compatible exit transition finished after successful resource loading. |
@@ -169,7 +190,7 @@ The level-completion call records best stars and score, grants the configured se
 
 ## Compatibility
 
-The original `TtpGuiApi` method and signal names remain as deprecated compatibility wrappers/signals for existing integrations. New host code should use the semantic API above. Signals with a direct replacement are emitted alongside their new equivalents; do not connect to both for the same event. Result-modal-specific legacy signals are emitted when their matching legacy wrapper is called. `send_notification_ui()` and `manage_tap_background()` remain only for old integrations and should not be used in new code. The old `TYPES_BTN_ITEM` enum is retained as a deprecated alias for `ItemType`.
+The original `TtpGuiApi` method and signal names remain as deprecated compatibility wrappers/signals for existing integrations. The legacy `loading_completed` signal carries the same `(operation_id, level_data, resource)` result as `level_load_completed`; `get_loaded_resource(path)` remains available for consumers that still use the old pull-based flow. New host code should use the semantic API above. Signals with a direct replacement are emitted alongside their new equivalents; do not connect to both for the same event. Result-modal-specific legacy signals are emitted when their matching legacy wrapper is called. `send_notification_ui()` and `manage_tap_background()` remain only for old integrations and should not be used in new code. The old `TYPES_BTN_ITEM` enum is retained as a deprecated alias for `ItemType`.
 
 ## Current limitations
 

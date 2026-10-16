@@ -20,9 +20,10 @@ func configure(new_level_key: Variant, host_stage: Node) -> void:
 	stage = host_stage
 
 
-func start_level() -> void:
+func start_level() -> bool:
 	active = true
 	started.emit()
+	return true
 
 
 func stop_level() -> void:
