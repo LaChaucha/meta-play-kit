@@ -1,8 +1,8 @@
 ﻿# MetaPlayKit
 
-MetaPlayKit is a reusable Godot 4.7 meta-game addon with a sample consumer project. It provides a public `TtpGuiApi` facade, progression and store rules, asynchronous level-resource loading, reusable UI components, a theme, and UI assets. The `demo/` directory contains example screens and sample gameplay; consuming games provide their own presentation and level scenes.
+MetaPlayKit is a reusable Godot 4.7 addon being developed as a production-oriented meta-game layer for multiple host games. It provides a public `TtpGuiApi` facade, progression and store rules, asynchronous level-resource loading, reusable UI components, a theme, and UI assets. This repository is an early product baseline with a sample consumer: the sample demonstrates integration but does not define the host game's screens or the product boundary. See [PRODUCT.md](PRODUCT.md) for the product intent, ownership boundaries, and readiness gates.
 
-## Run the demo
+## Run the sample consumer
 
 Open the repository root's `project.godot` in Godot 4.7 and run the main scene. The project uses a 1280 × 720 logical viewport with `canvas_items` stretching.
 
@@ -17,6 +17,7 @@ Open the repository root's `project.godot` in Godot 4.7 and run the main scene. 
 | `addons/metaplay_kit/runtime/components/`, `ui/` | Reusable UI controls and loading presentation. |
 | `addons/metaplay_kit/runtime/platform/` | Optional platform purchase adapter and desktop mock. |
 | `addons/metaplay_kit/assets/` | Reusable theme and UI art. |
+| `PRODUCT.md` | Product direction, responsibility boundaries, and production readiness gates. |
 | `demo/scenes/`, `demo/scripts/` | Sample consumer app and level; not required by the addon runtime. |
 | `tests/`, `scenarios/` | Domain/loading tests and repeatable demo flows. |
 | `interfaces/` | Archived Godot 3 reference material; not part of the runtime. |
@@ -75,7 +76,7 @@ A level entry uses `name`, `max_score`, `max_stars`, `scene_path`, and `enabled`
 | Read store/settings state | `get_settings`, `get_items`, `get_item(path)`, `get_currency_products`, `get_currency_balance`, `get_item_type_values` |
 | Loading/presentation helpers | `get_loaded_resource(path)`, `is_loading`, `format_number(value)` |
 
-`start_or_resume_game()` requests loading of the next available level. Gameplay is presented by the host after the load completes and a valid level instance is created. `request_level_load()` may load a configured level directly; `select_level()` additionally rejects locked levels. `complete_level()` records progress and requests the `win` screen. The host owns stopping/pausing its gameplay node and deciding how to persist session state.
+`start_or_resume_game()` requests loading of the next available level. Gameplay is presented by the host after the load completes and a valid level instance is created. `request_level_load()` returns `true` when the request is accepted and `false` when it is rejected; rejection details are emitted through `action_rejected`. Only one load request can be active at a time, and direct requests as well as `select_level()` reject locked levels and levels without a scene path. `select_level()`, retry, next-level, and play-request signals are emitted only after their load request is accepted. `complete_level()` records progress and requests the `win` screen. The host owns stopping/pausing its gameplay node and deciding how to persist session state.
 
 ### Loading integration
 
@@ -139,13 +140,13 @@ The level-completion call records best stars and score, grants the configured se
 
 | Signal | Meaning |
 | --- | --- |
-| `level_load_started(level_data)` / `level_load_completed()` | A level load started / its resource became ready. |
+| `level_load_started(level_data)` / `level_load_completed()` | An accepted level load started / its resource became ready. |
 | `loading_progress_changed(progress)` / `level_load_exit_animation_completed()` | Loading progress and completion of the demo-compatible exit transition. |
 | `navigation_requested(screen_name, payload)` | A screen transition is requested (`home`, `game`, `levels`, `store`, `settings`, `win`, or `lose`). |
 | `action_rejected(message)` | A requested action or load could not be completed. |
 | `currency_balance_changed(total)` / `store_catalog_changed()` | Wallet or item catalog changed. |
-| `play_requested()` / `level_selected(level_data)` | The player requested play or selected an enabled level. |
-| `level_retry_requested(level_data)` / `next_level_load_requested(level_data)` | Retry or progression action was requested. |
+| `play_requested()` / `level_selected(level_data)` | An accepted play or enabled-level selection request. |
+| `level_retry_requested(level_data)` / `next_level_load_requested(level_data)` | An accepted retry or progression load request. |
 | `life_use_requested()` / `revive_reward_claimed(level_data)` / `reward_doubling_claimed(next_level, balance)` | Reward-related actions; ad presentation/provider integration belongs to the host. |
 | `sfx_setting_changed(enabled)` / `music_setting_changed(enabled)` | A setting toggled; connect these to the host audio system. |
 | `item_purchased(path)` / `item_equipped(path)` / `currency_product_credited(product_key)` | A store action succeeded. |

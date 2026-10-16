@@ -2,19 +2,32 @@
 
 ## Propósito y alcance
 
-MetaPlayKit es una demo de integración del kit de metajuego descrito originalmente en `interfaces/`. Implementa una interfaz navegable para inicio, carga de nivel, selector, partida simulada, pausa, victoria/derrota, recompensas, configuración, tienda de artículos, compra simulada de moneda y vista promocional.
+MetaPlayKit es un addon reutilizable de Godot en desarrollo como producto orientado a producción: una capa de metajuego para integrar en varios juegos anfitriones. El repositorio contiene el addon y un consumidor de ejemplo con pantallas navegables, nivel simulado, recompensas, configuración y tiendas. El ejemplo demuestra integración; no define las responsabilidades del producto ni obliga a los anfitriones a usar sus pantallas.
 
-El proyecto está hecho para Godot 4.7, con GDScript tipado y renderer GL Compatibility. La escena principal de la demo es `res://demo/scenes/main.tscn`. El addon reutilizable vive en `addons/metaplay_kit/`; `demo/` es el proyecto consumidor de ejemplo. La carpeta `interfaces/` y su antiguo `testAddons` son material de referencia: no forman parte del runtime y `.gdignore` impide importar el proyecto legado.
+El proyecto está hecho para Godot 4.7, con GDScript tipado y renderer GL Compatibility. La escena principal del consumidor de ejemplo es `res://demo/scenes/main.tscn`. El addon distribuible vive en `addons/metaplay_kit/`; `demo/` es solo una integración de referencia. El estado y las brechas del producto se describen en `PRODUCT.md` y se refinan en los issues de GitHub. La carpeta `interfaces/` y su antiguo `testAddons` son material de referencia: no forman parte del runtime y `.gdignore` impide importar el proyecto legado.
 
 ## Reglas para trabajar en este proyecto
 
-- Mantén separadas las responsabilidades: `MetaPlayModel` aplica reglas y estado; `TtpGuiApi` expone el contrato y coordina; `MetaPlayDemoStage` compone y presenta la demo; los componentes reutilizables manejan piezas acotadas de UI.
+- Mantén separadas las responsabilidades: `MetaPlayModel` aplica reglas y estado; `TtpGuiApi` expone el contrato y coordina; `MetaPlayDemoStage` compone el consumidor de ejemplo; los componentes reutilizables manejan piezas acotadas de UI.
 - Antes de editar GDScript, consulta las convenciones de Godot 4 y conserva tipos explícitos en variables, argumentos y retornos. Evita inferir tipos desde `Variant`, diccionarios, nodos o valores nulos.
 - Usa rutas `res://` para recursos del proyecto. Si mueves o renombras recursos, actualiza todas sus referencias y sidecars `.uid`/`.import` usando herramientas apropiadas de Godot.
 - Construye la interfaz dinámica con contenedores. El tema global vive en `addons/metaplay_kit/assets/theme/metaplay.tres`; evita añadir sombras o overrides tipográficos generales sin comprobar su efecto en todo el proyecto.
 - No conviertas la IAP simulada en una compra real ni abras enlaces externos automáticamente. La compra en escritorio es explícitamente una simulación; los enlaces se abren sólo por acción del usuario.
 - `interfaces/testAddons` es referencia archivada. No copies su runtime de Godot 3 al proyecto actual ni elimines esa referencia sin una petición explícita.
-- No hay backend ni guardado persistente: modelo, progreso, saldo, ajustes y compras viven en memoria durante la sesión.
+- La implementación actual aún no incluye backend ni guardado persistente: modelo, progreso, saldo, ajustes y compras viven en memoria durante la sesión. No asumas que esta limitación define el alcance final; las opciones de producción se registran en `PRODUCT.md` y en el backlog. Mantén la IAP de escritorio como simulación salvo que se defina y autorice una integración de proveedor verificado.
+
+## Desglose de épicas en historias de usuario
+
+Cuando se solicite convertir una épica o issue de producto en historias de usuario:
+
+- Analiza el alcance, problema, requisitos y criterios existentes en el issue antes de redactar. Contrasta el contrato actual del producto cuando sea necesario y distingue requisitos explícitos de decisiones propuestas.
+- Agrupa las historias por módulo o componente del sistema y ordénalas en una secuencia que permita implementarlas y validarlas.
+- Guarda la documentación bajo `tasks/`, con un `README.md` índice que enlace las historias, identifique la épica de origen y resuma decisiones relevantes y el orden sugerido.
+- Usa archivos con el formato `US-XXX-short-descriptive-name.md`, con identificadores secuenciales que no sustituyan ni confundan el número del issue de GitHub.
+- Cada historia debe incluir un título descriptivo y corto, módulo/componente, issue o épica relacionada, prioridad (`Alta`, `Media` o `Baja`) y una descripción en el formato: “Como [rol], quiero [acción] para [beneficio]”.
+- Escribe criterios de aceptación verificables en formato BDD (“Dado que… Cuando… Entonces…”) o como lista de comprobación inequívoca. Cubre el flujo normal, errores y límites relevantes; evita criterios vagos o tareas técnicas que no describan un resultado observable.
+- Mantén cada historia accionable y con alcance coherente. Divide capacidades independientes en historias distintas, declara dependencias o decisiones abiertas y, si una decisión de producto no está resuelta, marca claramente cualquier política recomendada como propuesta en lugar de requisito acordado.
+- No crees commits ni hagas push al documentar historias salvo autorización explícita del usuario.
 
 ## Convención para commits
 
@@ -39,6 +52,7 @@ No crees commits ni hagas push sin autorización explícita del usuario.
 | `addons/metaplay_kit/runtime/ui/` | Fábrica UI y overlay de carga. |
 | `addons/metaplay_kit/runtime/platform/iap_adapter.gd` | Frontera opcional de pagos y simulación de escritorio. |
 | `addons/metaplay_kit/assets/` | Tema e iconos reutilizables del kit. |
+| `PRODUCT.md` | Dirección del producto, límites de responsabilidad y criterios de preparación para producción. |
 | `demo/scenes/`, `demo/scripts/` | Aplicación de ejemplo y nivel simulado consumidor del addon. |
 | `demo/assets/`, `demo/tools/` | Recursos y utilidades exclusivos de la demo. |
 | `tests/`, `scenarios/` | Pruebas del kit y recorridos funcionales de la demo. |
