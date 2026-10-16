@@ -173,6 +173,42 @@ func test_failed_load_emits_one_correlated_terminal_event() -> void:
 	TtpGuiApi.level_load_failed.disconnect(failed_callback)
 
 
+func test_failed_operation_can_be_retried_as_a_new_operation() -> void:
+	TtpGuiApi.configure_levels({
+		"retry": {"name": "Retry", "enabled": true, "scene_path": LEVEL_PATH},
+	})
+	var started_ids: Array[int] = []
+	var failed_ids: Array[int] = []
+	var completed_ids: Array[int] = []
+	var completed_resources: Array[Resource] = []
+	var started_callback: Callable = func(operation_id: int, _data: Dictionary) -> void:
+		started_ids.append(operation_id)
+		if started_ids.size() == 1:
+			TtpGuiApi._on_batch_failed(LEVEL_PATH, "Synthetic first-operation failure")
+	var failed_callback: Callable = func(operation_id: int, _data: Dictionary, _message: String) -> void: failed_ids.append(operation_id)
+	var completed_callback: Callable = func(operation_id: int, _data: Dictionary, resource: Resource) -> void:
+		completed_ids.append(operation_id)
+		completed_resources.append(resource)
+	TtpGuiApi.level_load_started.connect(started_callback)
+	TtpGuiApi.level_load_failed.connect(failed_callback)
+	TtpGuiApi.level_load_completed.connect(completed_callback)
+	assert_true(TtpGuiApi.request_level_load("retry"))
+	assert_eq(failed_ids, [started_ids[0]])
+	assert_false(TtpGuiApi.is_loading())
+	assert_true(TtpGuiApi.request_level_load("retry"), "The same key and path can be requested after failure.")
+	var retry_finished: bool = await wait_until(func() -> bool: return not TtpGuiApi.is_loading())
+	assert_true(retry_finished)
+	assert_ne(started_ids[0], started_ids[1], "A retry receives a new operation ID.")
+	assert_eq(completed_ids, [started_ids[1]], "The retry succeeds without inheriting the prior failure.")
+	assert_true(failed_ids.size() == 1, "A previous failure cannot emit another terminal outcome for the retry.")
+	assert_eq(completed_resources.size(), 1)
+	assert_is(completed_resources[0], PackedScene)
+	assert_eq(completed_resources[0].resource_path, LEVEL_PATH)
+	TtpGuiApi.level_load_started.disconnect(started_callback)
+	TtpGuiApi.level_load_failed.disconnect(failed_callback)
+	TtpGuiApi.level_load_completed.disconnect(completed_callback)
+
+
 func test_successful_load_closes_operation_before_terminal_signal() -> void:
 	TtpGuiApi.configure_levels({
 		"first": {"name": "First", "enabled": true, "scene_path": LEVEL_PATH},
@@ -212,6 +248,7 @@ func test_cancellation_closes_operation_once_and_allows_a_new_request() -> void:
 	var started_ids: Array[int] = []
 	var cancelled_ids: Array[int] = []
 	var completed_ids: Array[int] = []
+	var completed_resources: Array[Resource] = []
 	var cancellation_states: Array[bool] = []
 	var cancel_results: Array[bool] = []
 	var started_callback: Callable = func(operation_id: int, _data: Dictionary) -> void: started_ids.append(operation_id)
@@ -221,7 +258,9 @@ func test_cancellation_closes_operation_once_and_allows_a_new_request() -> void:
 	var cancelled_callback: Callable = func(operation_id: int, _data: Dictionary) -> void:
 		cancelled_ids.append(operation_id)
 		cancellation_states.append(TtpGuiApi.is_loading())
-	var completed_callback: Callable = func(operation_id: int, _data: Dictionary, _resource: Resource) -> void: completed_ids.append(operation_id)
+	var completed_callback: Callable = func(operation_id: int, _data: Dictionary, resource: Resource) -> void:
+		completed_ids.append(operation_id)
+		completed_resources.append(resource)
 	TtpGuiApi.level_load_started.connect(started_callback)
 	TtpGuiApi.loading_progress_changed.connect(progress_callback)
 	TtpGuiApi.level_load_cancelled.connect(cancelled_callback)
@@ -242,6 +281,10 @@ func test_cancellation_closes_operation_once_and_allows_a_new_request() -> void:
 	var finished: bool = await wait_until(func() -> bool: return not TtpGuiApi.is_loading())
 	assert_true(finished)
 	assert_eq(completed_ids, [started_ids[1]], "The next operation completes independently of the cancelled one.")
+	assert_ne(started_ids[0], started_ids[1], "Retrying after cancellation gets a fresh operation ID.")
+	assert_eq(completed_resources.size(), 1, "The cancelled operation cannot deliver a resource.")
+	assert_is(completed_resources[0], PackedScene)
+	assert_eq(completed_resources[0].resource_path, LEVEL_PATH, "The retry gets the requested scene resource.")
 	assert_false(TtpGuiApi.cancel_level_load(started_ids[1]), "A successful operation is already terminal.")
 	TtpGuiApi.level_load_started.disconnect(started_callback)
 	TtpGuiApi.loading_progress_changed.disconnect(progress_callback)

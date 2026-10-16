@@ -80,7 +80,7 @@ A level entry uses `name`, `max_score`, `max_stars`, `scene_path`, and `enabled`
 
 ### Loading integration
 
-Connect before requesting the initial level. Every accepted request gets a monotonically increasing `operation_id`. The start, progress, and terminal signals carry that same ID, so a host can correlate events even when the same scene is requested repeatedly. Each accepted operation emits exactly one terminal result: `level_load_completed`, `level_load_failed`, or (when cancellation is implemented) `level_load_cancelled`. A successful completion includes the exact loaded `Resource` and level definition for that operation. Rejected requests emit no load lifecycle events. `get_loaded_resource(path)` remains as a compatibility helper and consumes the ready resource; new integrations should use the resource delivered by the completion signal.
+Connect before requesting the initial level. Every accepted request gets a monotonically increasing `operation_id`. The start, progress, and terminal signals carry that same ID, so a host can correlate events even when the same scene is requested repeatedly. Each accepted operation emits exactly one terminal result: `level_load_completed`, `level_load_failed`, or `level_load_cancelled`. A successful completion includes the exact loaded `Resource` and level definition for that operation. Rejected requests emit no load lifecycle events. `get_loaded_resource(path)` remains as a compatibility helper and consumes the ready resource; new integrations should use the resource delivered by the completion signal.
 
 ```gdscript
 extends Node
@@ -209,4 +209,4 @@ Visual assets used by the demo were extracted from `interfaces/testAddons` with 
 
 ## Verification
 
-`tests/` covers model invariants and repeated/invalid level loading. JSON files in `scenarios/` exercise the demo's navigation, purchases, results, rewards, settings, and pause flows.
+`tests/` covers model invariants and repeated/invalid level loading, including retrying the same path after success, failure, or cancellation. JSON files in `scenarios/` exercise the demo's navigation, purchases, results, rewards, settings, and pause flows.

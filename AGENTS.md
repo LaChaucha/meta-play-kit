@@ -123,7 +123,7 @@ El catálogo de artículos usa claves superiores de producto y, en productos por
 
 ## Pruebas y recorridos funcionales
 
-Las pruebas unitarias cubren invariantes del modelo y regresiones de carga. En particular, `tests/test_level_loading.gd` verifica que una misma escena consumida pueda cargarse de nuevo y que una escena inválida no deje la interfaz mostrando juego sin nivel válido.
+Las pruebas unitarias cubren invariantes del modelo y regresiones de carga. En particular, `tests/test_level_loading.gd` verifica que una misma escena pueda cargarse de nuevo tras éxito, fallo o cancelación, con IDs y recursos correctos, y que una escena inválida no deje la interfaz mostrando juego sin nivel válido.
 
 Los escenarios son JSON de automatización reproducible:
 
@@ -158,6 +158,7 @@ Los escenarios se ejecutan con `scripts/debug/run_scenario.py`, pasando el proye
 ## Historial técnico relevante
 
 - El arreglo de carga repetida limpia las rutas activas de `ResourceBatch` antes de notificar a los consumidores.
+- Un nuevo lote que solicita una ruta aún activa en el loader threaded se une a esa carga; los fallos invalidan el lote antes de emitir el resultado terminal.
 - La pantalla de juego se presenta sólo después de instanciar el `PackedScene`; una carga inválida vuelve al inicio.
 - La sombra general de etiquetas está desactivada para mantener el texto nítido. La variación `TitleLabel` conserva una sombra pequeña y suave sólo para títulos.
 - El escenario `game_win_flow.json` incluye acciones reales sobre nivel 2 para cubrir la regresión que antes quedaba oculta al comprobar únicamente la etiqueta.

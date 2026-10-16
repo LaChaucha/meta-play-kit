@@ -38,6 +38,12 @@ func start_loading(p_min_stage_time: int = 100) -> void:
 	_loading = true
 	_generation += 1
 	for path: String in _active_paths:
+		# A closed batch cannot stop Godot's threaded request. If a new batch asks
+		# for the same path while that request is still running, join its result
+		# instead of issuing a second request (which would return ERR_BUSY).
+		var status: ResourceLoader.ThreadLoadStatus = ResourceLoader.load_threaded_get_status(path)
+		if status == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+			continue
 		var error: Error = ResourceLoader.load_threaded_request(path, "", true)
 		if error != OK:
 			_loading = false
