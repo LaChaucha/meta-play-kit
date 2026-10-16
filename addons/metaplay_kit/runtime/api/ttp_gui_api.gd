@@ -461,6 +461,7 @@ func _on_batch_failed(_path: String, message: String) -> void:
 		return
 	var operation_id: int = _active_load_operation_id
 	var level_data: Dictionary = _loading_level.duplicate(true)
+	_resource_batch.close()
 	_load_request_active = false
 	_active_load_operation_id = 0
 	_load_terminal_emitting = true
