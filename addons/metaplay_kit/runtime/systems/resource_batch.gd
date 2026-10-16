@@ -105,6 +105,8 @@ func _poll_batch(generation: int, min_stage_time_ms: int) -> void:
 				progress_sum += float(progress_values[0]) if not progress_values.is_empty() else 0.0
 		_total_progress = progress_sum / float(_active_paths.size())
 		stage_updated.emit(_total_progress)
+		if not _loading or generation != _generation:
+			return
 		if completed == _active_paths.size():
 			_loading = false
 			# Release the batch before notifying consumers: they may immediately
@@ -112,6 +114,8 @@ func _poll_batch(generation: int, min_stage_time_ms: int) -> void:
 			_active_paths.clear()
 			_total_progress = 1.0
 			stage_updated.emit(_total_progress)
+			if generation != _generation:
+				return
 			load_finished.emit()
 			return
 		if min_stage_time_ms > 0:

@@ -372,6 +372,7 @@ func _connect_api() -> void:
 	TtpGuiApi.level_load_started.connect(_on_loading_started)
 	TtpGuiApi.level_load_completed.connect(_on_loading_completed)
 	TtpGuiApi.level_load_failed.connect(_on_loading_failed)
+	TtpGuiApi.level_load_cancelled.connect(_on_loading_cancelled)
 	TtpGuiApi.currency_balance_changed.connect(_update_coins)
 	TtpGuiApi.action_rejected.connect(_on_operation_rejected)
 	TtpGuiApi.item_equipped.connect(update_item_game_loaded)
@@ -817,6 +818,13 @@ func _on_loading_completed(operation_id: int, level_data: Dictionary, resource: 
 
 
 func _on_loading_failed(operation_id: int, _level_data: Dictionary, _message: String) -> void:
+	if operation_id != _loading_operation_id:
+		return
+	_loading_operation_id = 0
+	show_home()
+
+
+func _on_loading_cancelled(operation_id: int, _level_data: Dictionary) -> void:
 	if operation_id != _loading_operation_id:
 		return
 	_loading_operation_id = 0
