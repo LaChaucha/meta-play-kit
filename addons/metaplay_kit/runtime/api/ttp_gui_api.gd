@@ -3,6 +3,8 @@ extends Node
 ## Public facade for host games. Callers configure data, issue game actions,
 ## query read-only snapshots, and subscribe to events without accessing internals.
 
+const LEVEL_LOAD_BUSY_MESSAGE: String = "A level load is already in progress."
+
 signal level_load_started(level_data: Dictionary)
 signal level_load_completed()
 signal level_load_exit_animation_completed()
@@ -63,6 +65,7 @@ var _model: MetaPlayModel = MetaPlayModel.new()
 var _resource_batch: ResourceBatch = ResourceBatch.new()
 var _loading_level: Dictionary = {}
 var _loading_path: String = ""
+var _load_request_active: bool = false
 
 
 func _ready() -> void:
@@ -144,7 +147,7 @@ func format_number(value: Variant) -> String:
 
 
 func is_loading() -> bool:
-	return _resource_batch.is_loading()
+	return _load_request_active
 
 
 func get_loaded_resource(path: String) -> Resource:
@@ -160,22 +163,31 @@ func request_initial_level_load() -> Dictionary:
 	return level
 
 
-func request_level_load(level_key: Variant) -> void:
+func request_level_load(level_key: Variant) -> bool:
+	if _load_request_active:
+		_reject(LEVEL_LOAD_BUSY_MESSAGE)
+		return false
 	var level: Dictionary = get_level(level_key)
 	if level.is_empty():
 		_reject("The requested level does not exist.")
-		return
+		return false
+	if not bool(level.get("enabled", false)):
+		_reject("The requested level is locked or unavailable.")
+		return false
+	var scene_path: String = str(level.get("scene_path", "")).strip_edges()
+	if scene_path.is_empty():
+		_reject("The requested level does not have a scene path.")
+		return false
 	_loading_level = level
 	_loading_level["key"] = level_key
-	_loading_path = str(level.get("scene_path", ""))
+	_loading_path = scene_path
+	_load_request_active = true
 	var level_data: Dictionary = _loading_level.duplicate(true)
 	level_load_started.emit(level_data)
 	loading_started.emit(level_data)
-	if _loading_path.is_empty():
-		call_deferred("_on_batch_finished")
-		return
 	_resource_batch.add_resource_to_batch(_loading_path)
 	_resource_batch.start_loading(24)
+	return true
 
 
 func complete_level(
@@ -208,8 +220,9 @@ func retry_level(level_key: Variant) -> void:
 	var level: Dictionary = get_level(level_key)
 	if level.is_empty():
 		return
+	if not request_level_load(level_key):
+		return
 	level_retry_requested.emit(level)
-	request_level_load(level_key)
 
 
 func load_next_level() -> void:
@@ -217,9 +230,10 @@ func load_next_level() -> void:
 	var level: Dictionary = get_level(next_key)
 	if level.is_empty():
 		return
+	if not request_level_load(next_key):
+		return
 	next_level_load_requested.emit(level)
 	modal_win_load_next_level_pressed.emit(level)
-	request_level_load(next_key)
 
 
 func revive_after_reward(level_key: Variant) -> void:
@@ -261,11 +275,13 @@ func request_settings_screen() -> void:
 
 
 func start_or_resume_game() -> void:
+	var level_key: Variant = get_next_available_level()
+	if level_key == null:
+		return
+	if not request_level_load(level_key):
+		return
 	play_requested.emit()
 	home_tap_to_play_pressed.emit()
-	var level_key: Variant = get_next_available_level()
-	if level_key != null:
-		request_level_load(level_key)
 
 
 func select_level(level_key: Variant) -> void:
@@ -273,9 +289,10 @@ func select_level(level_key: Variant) -> void:
 	if level.is_empty() or not bool(level.get("enabled", false)):
 		_reject("The selected level is locked or unavailable.")
 		return
+	if not request_level_load(level_key):
+		return
 	level_selected.emit(level)
 	level_selector_load_new_level_selected.emit(level)
-	request_level_load(level_key)
 
 
 func toggle_sfx() -> void:
@@ -350,6 +367,7 @@ func _on_loading_progress(progress: float) -> void:
 func _on_batch_finished() -> void:
 	level_load_completed.emit()
 	loading_completed.emit()
+	_load_request_active = false
 	call_deferred("_emit_loading_exit")
 
 
@@ -359,6 +377,7 @@ func _emit_loading_exit() -> void:
 
 
 func _on_batch_failed(_path: String, message: String) -> void:
+	_load_request_active = false
 	_reject(message)
 	_request_screen("home")
 
@@ -408,16 +427,20 @@ func modal_win_retry_level(level_key: Variant) -> void:
 	var level: Dictionary = get_level(level_key)
 	if level.is_empty():
 		return
+	if not request_level_load(level_key):
+		return
+	level_retry_requested.emit(level)
 	modal_win_retry_button_pressed.emit(level)
-	retry_level(level_key)
 
 
 func modal_lose_retry_level(level_key: Variant) -> void:
 	var level: Dictionary = get_level(level_key)
 	if level.is_empty():
 		return
+	if not request_level_load(level_key):
+		return
+	level_retry_requested.emit(level)
 	modal_lose_retry_button_pressed.emit(level)
-	retry_level(level_key)
 
 
 func modal_win_next_level(_current_level_key: Variant) -> void:

@@ -85,8 +85,6 @@ func show_level(first_level_to_play: Dictionary) -> bool:
 
 
 func change_current_level(new_level: Dictionary) -> void:
-	if _current_level_node != null and is_instance_valid(_current_level_node) and _current_level_node.has_method("stop_level"):
-		_current_level_node.call("stop_level")
 	TtpGuiApi.request_level_load(new_level.get("key", _current_level_key))
 
 

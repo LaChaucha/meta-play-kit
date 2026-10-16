@@ -29,6 +29,10 @@ window/size/window_height_override=720.0
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/metaplay_kit/plugin.cfg")
+
 [gui]
 
 theme/custom="res://addons/metaplay_kit/assets/theme/metaplay.tres"
@@ -52,7 +56,3 @@ pause={
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
-
-[editor_plugins]
-
-enabled=PackedStringArray("res://addons/metaplay_kit/plugin.cfg")
