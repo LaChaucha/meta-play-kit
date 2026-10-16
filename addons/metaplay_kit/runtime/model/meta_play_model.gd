@@ -183,8 +183,11 @@ func export_completion_state() -> Dictionary:
 	return {"version": 1, "attempts": attempts.duplicate(true), "reward_claims": reward_claims.duplicate(true), "last_base_reward_claimed_at": last_base_reward_claimed_at.duplicate(true), "attempt_sequence": _attempt_sequence}
 
 
-func restore_completion_state(snapshot: Dictionary) -> bool:
+func can_restore_completion_state(snapshot: Dictionary, available_levels: Dictionary) -> bool:
 	if int(snapshot.get("version", -1)) != 1:
+		return false
+	var sequence_raw: Variant = snapshot.get("attempt_sequence")
+	if not sequence_raw is int or int(sequence_raw) < 0:
 		return false
 	var raw_attempts: Variant = snapshot.get("attempts")
 	var raw_claims: Variant = snapshot.get("reward_claims")
@@ -197,17 +200,28 @@ func restore_completion_state(snapshot: Dictionary) -> bool:
 			return false
 		var attempt: Dictionary = entry as Dictionary
 		var attempt_status: String = str(attempt.get("status", ""))
-		if not levels.has(attempt.get("level_key")) or not ["active", "lost", "completed", "abandoned"].has(attempt_status):
+		if not available_levels.has(attempt.get("level_key")) or not ["active", "lost", "completed", "abandoned"].has(attempt_status):
 			return false
-		if attempt_status == "completed" and (not attempt.get("result", {}) is Dictionary or not attempt.get("completion", {}) is Dictionary):
-			return false
+		if attempt_status == "completed":
+			var result_raw: Variant = attempt.get("result")
+			var completion_raw: Variant = attempt.get("completion")
+			if not result_raw is Dictionary or not completion_raw is Dictionary:
+				return false
+			var attempt_result: Dictionary = result_raw as Dictionary
+			var completion: Dictionary = completion_raw as Dictionary
+			if not attempt_result.get("stars") is int or not attempt_result.get("score") is int:
+				return false
+			if int(attempt_result["stars"]) < 0 or int(attempt_result["stars"]) > 3 or int(attempt_result["score"]) < 0:
+				return false
+			if str(completion.get("attempt_id", "")) != str(attempt_id) or completion.get("level_key") != attempt.get("level_key"):
+				return false
 	for claim_key: Variant in (raw_claims as Dictionary).keys():
 		var claim_raw: Variant = raw_claims[claim_key]
 		if not claim_key is String or not claim_raw is Dictionary:
 			return false
 		var claim: Dictionary = claim_raw as Dictionary
 		var claim_attempt_id: String = str(claim.get("attempt_id", ""))
-		if not (raw_attempts as Dictionary).has(claim_attempt_id) or int(claim.get("amount", -1)) < 0 or int(claim.get("coins", -1)) < 0:
+		if not (raw_attempts as Dictionary).has(claim_attempt_id) or not claim.get("amount") is int or not claim.get("coins") is int or int(claim.get("amount", -1)) < 0 or int(claim.get("coins", -1)) < 0:
 			return false
 		if str(claim_key).begins_with("base:"):
 			if str(claim_key) != "base:%s" % claim_attempt_id or str(((raw_attempts as Dictionary)[claim_attempt_id] as Dictionary).get("status", "")) != "completed":
@@ -218,12 +232,22 @@ func restore_completion_state(snapshot: Dictionary) -> bool:
 		else:
 			return false
 	for level_key: Variant in (raw_last_claimed as Dictionary).keys():
-		if not levels.has(level_key) or int(raw_last_claimed[level_key]) < 0:
+		var timestamp: Variant = raw_last_claimed[level_key]
+		if not available_levels.has(level_key) or not timestamp is int or int(timestamp) < 0:
 			return false
+	return true
+
+
+func restore_completion_state(snapshot: Dictionary) -> bool:
+	if not can_restore_completion_state(snapshot, levels):
+		return false
+	var raw_attempts: Dictionary = snapshot.get("attempts", {}) as Dictionary
+	var raw_claims: Dictionary = snapshot.get("reward_claims", {}) as Dictionary
+	var raw_last_claimed: Dictionary = snapshot.get("last_base_reward_claimed_at", {}) as Dictionary
 	attempts = (raw_attempts as Dictionary).duplicate(true)
 	reward_claims = (raw_claims as Dictionary).duplicate(true)
 	last_base_reward_claimed_at = (raw_last_claimed as Dictionary).duplicate(true)
-	_attempt_sequence = maxi(0, int(snapshot.get("attempt_sequence", 0)))
+	_attempt_sequence = int(snapshot.get("attempt_sequence", 0))
 	return true
 
 

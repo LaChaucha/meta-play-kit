@@ -18,6 +18,8 @@ const RESULT_CODE_STORE_ITEM_NOT_OWNED: StringName = &"store.item_not_owned"
 const RESULT_CODE_STORE_ITEM_NOT_EQUIPPABLE: StringName = &"store.item_not_equippable"
 const RESULT_CODE_WALLET_INSUFFICIENT_FUNDS: StringName = &"wallet.insufficient_funds"
 const RESULT_CODE_CURRENCY_PRODUCT_NOT_FOUND: StringName = &"currency.product_not_found"
+const SESSION_SNAPSHOT_VERSION: int = 2
+const COMPLETION_FEATURE_STATE_KEY: String = "level_completion"
 
 signal level_load_started(operation_id: int, level_data: Dictionary)
 signal level_load_completed(operation_id: int, level_data: Dictionary, resource: Resource)
@@ -45,6 +47,7 @@ signal store_catalog_changed()
 signal level_attempt_started(attempt_id: String, level_key: Variant)
 signal level_attempt_completed(attempt_id: String, result: Dictionary)
 signal reward_claim_completed(result: MetaPlayResult)
+signal session_restored(schema_version: int)
 
 # Legacy signals retained for existing integrations. New consumers should use
 # the semantic signals above.
@@ -96,6 +99,7 @@ var _active_load_progress_emitted: bool = false
 var _pending_cancelled_operation_id: int = 0
 var _pending_cancelled_level_data: Dictionary = {}
 var _pending_cancelled_scene_path: String = ""
+var _session_feature_state: Dictionary = {}
 
 
 func _ready() -> void:
@@ -417,29 +421,94 @@ func _finish_reward_claim(outcome: Dictionary, fallback_message: String) -> Meta
 	return response
 
 
-func export_session_state() -> Dictionary:
-	return {"schema_version": 1, "levels": _model.levels.duplicate(true), "currency_balance": _model.coins, "completion_state": _model.export_completion_state()}
+func set_session_feature_state(feature_key: StringName, feature_state: Dictionary) -> MetaPlayResult:
+	var normalized_key: String = str(feature_key).strip_edges()
+	if normalized_key.is_empty() or normalized_key == COMPLETION_FEATURE_STATE_KEY:
+		return _reject_with_result(&"session.feature_key_invalid", "The feature state key is empty or reserved.", {"feature_key": normalized_key})
+	if not _is_snapshot_serializable(feature_state):
+		return _reject_with_result(&"session.feature_state_invalid", "Feature state must contain only serializable values.", {"feature_key": normalized_key})
+	_session_feature_state[normalized_key] = feature_state.duplicate(true)
+	return MetaPlayResult.completed(0, {"feature_key": normalized_key})
+
+
+func get_session_feature_state(feature_key: StringName) -> Dictionary:
+	var state: Variant = _session_feature_state.get(str(feature_key), {})
+	return state.duplicate(true) if state is Dictionary else {}
+
+
+func export_session_state() -> MetaPlayResult:
+	var feature_state: Dictionary = _session_feature_state.duplicate(true)
+	feature_state[COMPLETION_FEATURE_STATE_KEY] = _model.export_completion_state()
+	var snapshot: Dictionary = {
+		"schema_version": SESSION_SNAPSHOT_VERSION,
+		"progression": {"levels": _model.levels.duplicate(true)},
+		"wallet": {"currency_balance": _model.coins},
+		"settings": _model.configuration.duplicate(true),
+		"inventory": {"items": _model.game_items.duplicate(true)},
+		"features": feature_state,
+	}
+	if not _is_snapshot_serializable(snapshot):
+		return _reject_with_result(&"session.snapshot_invalid", "The current session contains data that cannot be serialized.")
+	return MetaPlayResult.completed(0, {"snapshot": snapshot})
 
 
 func restore_session_state(snapshot: Dictionary) -> MetaPlayResult:
-	if int(snapshot.get("schema_version", -1)) != 1:
+	if int(snapshot.get("schema_version", -1)) != SESSION_SNAPSHOT_VERSION:
 		return _reject_with_result(&"session.snapshot_unsupported", "The session snapshot version is unsupported.")
-	var raw_levels: Variant = snapshot.get("levels")
-	var raw_completion: Variant = snapshot.get("completion_state")
-	var balance: int = int(snapshot.get("currency_balance", -1))
-	if not raw_levels is Dictionary or not raw_completion is Dictionary or balance < 0:
+	var raw_progression: Variant = snapshot.get("progression")
+	var raw_wallet: Variant = snapshot.get("wallet")
+	var raw_settings: Variant = snapshot.get("settings")
+	var raw_inventory: Variant = snapshot.get("inventory")
+	var raw_features: Variant = snapshot.get("features")
+	if not raw_progression is Dictionary or not raw_wallet is Dictionary or not raw_settings is Dictionary or not raw_inventory is Dictionary or not raw_features is Dictionary:
 		return _reject_with_result(&"session.snapshot_invalid", "The session snapshot is incomplete or invalid.")
-	for level_key: Variant in (raw_levels as Dictionary).keys():
-		if not (raw_levels as Dictionary)[level_key] is Dictionary:
+	var progression: Dictionary = raw_progression as Dictionary
+	var wallet: Dictionary = raw_wallet as Dictionary
+	var inventory: Dictionary = raw_inventory as Dictionary
+	var features: Dictionary = raw_features as Dictionary
+	var raw_levels: Variant = progression.get("levels")
+	var raw_items: Variant = inventory.get("items")
+	var raw_completion: Variant = features.get(COMPLETION_FEATURE_STATE_KEY)
+	var raw_balance: Variant = wallet.get("currency_balance")
+	if not raw_levels is Dictionary or not raw_items is Dictionary or not raw_completion is Dictionary or not raw_balance is int or int(raw_balance) < 0:
+		return _reject_with_result(&"session.snapshot_invalid", "The session snapshot is missing required domain state.")
+	if not _is_snapshot_serializable(snapshot):
+		return _reject_with_result(&"session.snapshot_invalid", "The session snapshot contains non-serializable values.")
+	var restored_levels: Dictionary = (raw_levels as Dictionary).duplicate(true)
+	for level_key: Variant in restored_levels.keys():
+		if not restored_levels[level_key] is Dictionary:
 			return _reject_with_result(&"session.snapshot_invalid", "The session snapshot contains invalid level data.", {"level_key": level_key})
-	var previous_levels: Dictionary = _model.levels.duplicate(true)
-	_model.levels = (raw_levels as Dictionary).duplicate(true)
-	if not _model.restore_completion_state(raw_completion as Dictionary):
-		_model.levels = previous_levels
+	if not _model.can_restore_completion_state(raw_completion as Dictionary, restored_levels):
 		return _reject_with_result(&"session.snapshot_invalid", "The session completion state is invalid.")
-	_model.set_coins(balance)
-	_model.levels_changed.emit()
-	return MetaPlayResult.completed(0, {"schema_version": 1})
+	var restored_features: Dictionary = features.duplicate(true)
+	restored_features.erase(COMPLETION_FEATURE_STATE_KEY)
+	_model.levels = restored_levels
+	_model.configuration = (raw_settings as Dictionary).duplicate(true)
+	_model.game_items = (raw_items as Dictionary).duplicate(true)
+	_model.coins = int(raw_balance)
+	var completion_restored: bool = _model.restore_completion_state(raw_completion as Dictionary)
+	assert(completion_restored, "Validated completion state must restore atomically.")
+	_session_feature_state = restored_features
+	session_restored.emit(SESSION_SNAPSHOT_VERSION)
+	return MetaPlayResult.completed(0, {"schema_version": SESSION_SNAPSHOT_VERSION})
+
+
+func _is_snapshot_serializable(value: Variant) -> bool:
+	if value == null or value is bool or value is int or value is String or value is StringName:
+		return true
+	if value is float:
+		return is_finite(float(value))
+	if value is Array:
+		for item: Variant in value:
+			if not _is_snapshot_serializable(item):
+				return false
+		return true
+	if value is Dictionary:
+		for key: Variant in (value as Dictionary).keys():
+			if not (key is String or key is StringName) or not _is_snapshot_serializable((value as Dictionary)[key]):
+				return false
+		return true
+	return false
 
 
 func report_level_loss(attempt_id: String) -> MetaPlayResult:

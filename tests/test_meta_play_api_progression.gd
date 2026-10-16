@@ -78,36 +78,68 @@ func test_successful_level_completion_returns_committed_progress_and_emits_win_n
 func test_optional_reward_claim_is_idempotent_and_snapshot_restore_preserves_claims() -> void:
 	api.call("configure_levels", {"first": {"enabled": true, "scene_path": LEVEL_PATH}})
 	api.call("set_currency_balance", 100)
+	api.call("configure_settings", {"sfx": false, "music": true})
+	api.call("configure_items", {"hat": {"bought": true, "load": true}})
 	api.call("configure_completion_rewards", {"first": 25}, 600)
 	api.call("configure_optional_rewards", {"double_completion": 40})
+	api.call("set_session_feature_state", &"quests", {"daily_count": 2, "flags": ["first_win"]})
 	var attempt: MetaPlayResult = api.call("begin_level_attempt", "first") as MetaPlayResult
 	var attempt_id: String = str(attempt.context.get("attempt_id", ""))
 	api.call("complete_level", attempt_id, 1, 10, null)
 	var claim: MetaPlayResult = api.call("claim_reward_doubling", attempt_id, "ad-token-1") as MetaPlayResult
-	var snapshot: Dictionary = api.call("export_session_state") as Dictionary
+	var exported: MetaPlayResult = api.call("export_session_state") as MetaPlayResult
+	var snapshot: Dictionary = exported.context.get("snapshot", {}) as Dictionary
+	assert_eq(snapshot.get("schema_version"), 2)
+	assert_true((snapshot.get("settings", {}) as Dictionary).has("sfx"))
+	assert_true((snapshot.get("progression", {}) as Dictionary).has("levels"))
+	var mutated_snapshot: Dictionary = snapshot.duplicate(true)
+	(mutated_snapshot["settings"] as Dictionary)["sfx"] = true
+	assert_false(bool((api.call("get_settings") as Dictionary).get("sfx", true)))
 	api.call("set_currency_balance", 777)
+	api.call("configure_settings", {"sfx": true, "music": false})
+	api.call("configure_items", {})
+	watch_signals(api)
 	var restored: MetaPlayResult = api.call("restore_session_state", snapshot) as MetaPlayResult
 	var duplicate: MetaPlayResult = api.call("claim_reward_doubling", attempt_id, "ad-token-1") as MetaPlayResult
 
 	assert_eq(claim.context.get("amount"), 40)
+	assert_eq(exported.status, MetaPlayResult.Status.COMPLETED)
 	assert_eq(restored.status, MetaPlayResult.Status.COMPLETED)
 	assert_eq(int(api.call("get_currency_balance")), 165)
+	assert_false(bool((api.call("get_settings") as Dictionary).get("sfx", true)))
+	assert_true(bool((api.call("get_item", ["hat"]) as Dictionary).get("bought", false)))
+	assert_eq(api.call("get_session_feature_state", &"quests"), {"daily_count": 2, "flags": ["first_win"]})
 	assert_true(bool(duplicate.context.get("duplicate", false)))
+	assert_signal_emit_count(api, "session_restored", 1)
+	assert_signal_emit_count(api, "currency_balance_changed", 0, "Restore emits one consolidated notification instead of partial wallet changes.")
 
 
 func test_invalid_snapshot_restore_is_atomic_and_negative_reward_configuration_is_rejected() -> void:
 	api.call("configure_levels", {"first": {"enabled": true, "scene_path": LEVEL_PATH}})
 	api.call("set_currency_balance", 300)
 	var negative_config: MetaPlayResult = api.call("configure_completion_rewards", {"first": -1}, 30) as MetaPlayResult
-	var invalid_snapshot: Dictionary = {"schema_version": 1, "levels": {"wrong": {}}, "currency_balance": 1, "completion_state": {"version": 1}}
+	var invalid_snapshot: Dictionary = {"schema_version": 2, "progression": {"levels": {"wrong": {}}}, "wallet": {"currency_balance": 1}, "settings": {}, "inventory": {"items": {}}, "features": {"level_completion": {"version": 1}}}
+	watch_signals(api)
 	var restore_result: MetaPlayResult = api.call("restore_session_state", invalid_snapshot) as MetaPlayResult
+	var unsupported_snapshot: MetaPlayResult = api.call("restore_session_state", {"schema_version": 1}) as MetaPlayResult
 
 	assert_eq(negative_config.status, MetaPlayResult.Status.REJECTED)
 	assert_eq(negative_config.code, &"reward.configuration_invalid")
 	assert_eq(restore_result.status, MetaPlayResult.Status.REJECTED)
 	assert_eq(restore_result.code, &"session.snapshot_invalid")
+	assert_eq(unsupported_snapshot.code, &"session.snapshot_unsupported")
+	assert_signal_emit_count(api, "session_restored", 0)
 	assert_eq(int(api.call("get_currency_balance")), 300)
 	assert_true((api.call("get_level", "first") as Dictionary).has("scene_path"))
+	var unserializable: Node = Node.new()
+	var invalid_feature_state: MetaPlayResult = api.call("set_session_feature_state", &"quests", {"node": unserializable}) as MetaPlayResult
+	assert_eq(invalid_feature_state.status, MetaPlayResult.Status.REJECTED)
+	assert_eq(api.call("get_session_feature_state", &"quests"), {})
+	api.call("configure_settings", {"unsafe": unserializable})
+	var invalid_export: MetaPlayResult = api.call("export_session_state") as MetaPlayResult
+	assert_eq(invalid_export.status, MetaPlayResult.Status.REJECTED)
+	assert_eq(invalid_export.code, &"session.snapshot_invalid")
+	unserializable.free()
 
 
 func test_level_selection_returns_distinct_codes_for_unknown_and_locked_levels() -> void:

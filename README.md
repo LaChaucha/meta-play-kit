@@ -71,7 +71,7 @@ A level entry uses `name`, `max_score`, `max_stars`, `scene_path`, and `enabled`
 | Load and progress | `request_initial_level_load`, `request_level_load(key) -> bool` (compatibility), `request_level_load_result(key) -> MetaPlayResult`, `cancel_level_load(operation_id)`, `select_level(key) -> MetaPlayResult`, `begin_level_attempt(key) -> MetaPlayResult`, `complete_level(attempt_id, stars, score, next_level_key) -> MetaPlayResult`, `report_level_loss(attempt_id)`, `retry_level(key) -> MetaPlayResult`, `load_next_level() -> MetaPlayResult` |
 | Store and wallet | `purchase_item(path) -> MetaPlayResult`, `equip_item(path) -> MetaPlayResult`, `credit_currency_product(product_key) -> MetaPlayResult` |
 | Settings and rewards | `toggle_sfx`, `toggle_music`, `configure_completion_rewards(rewards, cooldown_seconds)`, `configure_optional_rewards(rewards)`, `claim_completion_reward(attempt_id)`, `claim_optional_reward(attempt_id, claim_id, reward_type)`, `revive_after_reward(attempt_id)`, `use_life()` |
-| Host-owned state | `export_session_state() -> Dictionary`, `restore_session_state(snapshot) -> MetaPlayResult` |
+| Host-owned state | `set_session_feature_state(key, state) -> MetaPlayResult`, `get_session_feature_state(key)`, `export_session_state() -> MetaPlayResult`, `restore_session_state(snapshot) -> MetaPlayResult` |
 | Navigation | `request_home_screen`, `request_level_selection_screen`, `request_store_screen`, `request_settings_screen`, `start_or_resume_game() -> MetaPlayResult` |
 | Read level/session state | `get_level(key)`, `get_levels`, `get_enabled_level_keys`, `get_next_available_level` |
 | Read store/settings state | `get_settings`, `get_items`, `get_item(path)`, `get_currency_products`, `get_currency_balance`, `get_item_type_values` |
@@ -83,7 +83,19 @@ A level entry uses `name`, `max_score`, `max_stars`, `scene_path`, and `enabled`
 
 Optional rewards are configured by type, for example `configure_optional_rewards({"double_completion": 120})`. After the host verifies an external provider outcome, call `claim_optional_reward(attempt_id, provider_claim_id, &"double_completion")`. The caller supplies an opaque unique claim ID, never a currency amount. Repeating the same claim returns its prior outcome; reusing the ID for another attempt or reward type is rejected. The kit does not initiate ads or purchases.
 
-`export_session_state()` returns a deep-copied versioned snapshot containing levels, currency balance, attempt outcomes, reward claims, and cooldown timestamps. The host owns storage and calls `restore_session_state(snapshot)` at session startup. Restore rejects unsupported or invalid snapshots before changing live state. Local snapshots are not authoritative against a modified client; online games must validate rewards on their server. This initial completion-state schema will be folded into the unified host-owned persistence contract in Epic #3.
+`export_session_state()` returns a `MetaPlayResult` whose context contains a deep-copied `snapshot` Dictionary at schema version 2. One snapshot always carries progression, wallet, settings, inventory, and feature state together. The `features` section includes the completion/reward ledger and serializable state supplied through `set_session_feature_state(key, state)`. Feature keys are stable strings; `level_completion` is reserved for the kit. Both feature-state setters and snapshot export reject non-serializable values instead of dropping them. The host owns storage and calls `restore_session_state(snapshot)` explicitly. Restore validates the entire snapshot before applying anything and emits one `session_restored(schema_version)` signal after success. This evolving product currently accepts only schema version 2; there is no migration path from the previous partial format. Local snapshots are not authoritative against a modified client; online games must validate rewards on their server.
+
+```gdscript
+var snapshot: Dictionary = {}
+var export_result: MetaPlayResult = TtpGuiApi.export_session_state()
+if export_result.status == MetaPlayResult.Status.COMPLETED:
+    snapshot = export_result.context.get("snapshot", {}) as Dictionary
+    # The host serializes and stores snapshot with its own save system.
+
+var restore_result: MetaPlayResult = TtpGuiApi.restore_session_state(snapshot)
+if restore_result.status == MetaPlayResult.Status.REJECTED:
+    push_warning("Session restore was rejected: %s" % restore_result.code)
+```
 
 `select_level()`, `retry_level()`, `load_next_level()`, and `start_or_resume_game()` return `ACCEPTED` with the load operation ID only after a load request starts; otherwise they return `REJECTED`. `request_level_load_result(key)` provides the same typed admission result for direct load requests; `request_level_load(key) -> bool` remains as a compatibility wrapper. The accepted command result describes request admission, not the later scene-load outcome: observe `level_load_result` for that lifecycle. Rejection codes include `level.not_found`, `level.locked`, `level.scene_path_missing`, `level.load_in_progress`, and `level.no_available_level`. Legacy `action_rejected` messages continue to emit during migration. Gameplay is presented by the host after the load completes and a valid level instance is created. The host owns stopping/pausing its gameplay node and deciding how to persist session state.
 
@@ -202,6 +214,7 @@ The level-completion call records best stars and score, grants the configured co
 | `navigation_requested(screen_name, payload)` | A screen transition is requested (`home`, `game`, `levels`, `store`, `settings`, `win`, or `lose`). |
 | `level_attempt_started(attempt_id, level_key)` / `level_attempt_completed(attempt_id, result)` | Gameplay attempt identity and its idempotently recorded terminal result. |
 | `reward_claim_completed(result)` | A new base or optional reward claim was applied; duplicate claims do not re-emit it. |
+| `session_restored(schema_version)` | One notification after the entire supported snapshot has been validated and applied. Query the facade for refreshed state after receiving it. |
 | `action_rejected(message)` | A requested action or load could not be completed. |
 | `currency_balance_changed(total)` / `store_catalog_changed()` | Wallet or item catalog changed. |
 | `play_requested()` / `level_selected(level_data)` | An accepted play or enabled-level selection request. |
@@ -216,7 +229,7 @@ The original `TtpGuiApi` method and signal names remain as deprecated compatibil
 
 ## Current limitations
 
-The kit has no backend or persistent save system. Progress, wallet, settings, purchases, and equipped items live in memory for the session. `credit_currency_product()` credits the configured amount for a product key; it does not validate a store receipt. The demo's desktop IAP adapter is a simulation. A shipped game must validate purchases with its platform provider and decide how to persist player progress.
+The kit has no backend, automatic file IO, or persistent save system. Progress, wallet, settings, purchases, and equipped items live in memory until the host explicitly exports a snapshot and stores it with its own save system. `credit_currency_product()` credits the configured amount for a product key; it does not validate a store receipt. The demo's desktop IAP adapter is a simulation. A shipped game must validate purchases with its platform provider and protect online progress with server authority.
 
 ## Legacy reference material
 
