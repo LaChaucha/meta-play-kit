@@ -23,11 +23,11 @@ func test_unknown_level_completion_returns_rejection_without_mutating_progress()
 	api.call("set_currency_balance", 100)
 	watch_signals(api)
 
-	var result: MetaPlayResult = api.call("complete_level", "missing", 3, 900, 50, "next") as MetaPlayResult
+	var result: MetaPlayResult = api.call("complete_level", "missing", 3, 900, "next") as MetaPlayResult
 
 	assert_eq(result.status, MetaPlayResult.Status.REJECTED)
-	assert_eq(result.code, &"level.not_found")
-	assert_eq(result.context.get("level_key"), "missing")
+	assert_eq(result.code, &"attempt.not_found")
+	assert_eq(result.context.get("attempt_id"), "missing")
 	assert_eq(int(api.call("get_currency_balance")), 100)
 	var level: Dictionary = api.call("get_level", "first") as Dictionary
 	assert_eq(level.get("max_stars"), 0)
@@ -43,9 +43,13 @@ func test_successful_level_completion_returns_committed_progress_and_emits_win_n
 		"second": {"name": "Second", "enabled": false, "scene_path": LEVEL_PATH},
 	})
 	api.call("set_currency_balance", 100)
+	api.call("configure_completion_rewards", {"first": 50}, 3600)
 	watch_signals(api)
 
-	var result: MetaPlayResult = api.call("complete_level", "first", 2, 900, 50, "second") as MetaPlayResult
+	var attempt: MetaPlayResult = api.call("begin_level_attempt", "first") as MetaPlayResult
+	var attempt_id: String = str(attempt.context.get("attempt_id", ""))
+	var result: MetaPlayResult = api.call("complete_level", attempt_id, 2, 900, "second") as MetaPlayResult
+	var duplicate: MetaPlayResult = api.call("complete_level", attempt_id, 2, 900, "second") as MetaPlayResult
 	var completed_level: Dictionary = api.call("get_level", "first") as Dictionary
 	var next_level: Dictionary = api.call("get_level", "second") as Dictionary
 	var navigation_args: Array = get_signal_args(api, "navigation_requested")
@@ -55,7 +59,10 @@ func test_successful_level_completion_returns_committed_progress_and_emits_win_n
 	assert_eq(result.code, &"")
 	assert_eq(result.operation_id, 0)
 	assert_eq(result.context.get("level_key"), "first")
+	assert_eq(result.context.get("attempt_id"), attempt_id)
 	assert_eq(result.context.get("currency_balance"), 150)
+	assert_eq(result.context.get("reward_amount"), 50)
+	assert_true(bool(duplicate.context.get("duplicate", false)))
 	assert_eq(completed_level.get("max_stars"), 2)
 	assert_eq(completed_level.get("max_score"), 900)
 	assert_true(bool(next_level.get("enabled", false)))
@@ -64,8 +71,43 @@ func test_successful_level_completion_returns_committed_progress_and_emits_win_n
 	assert_eq(legacy_navigation_args, navigation_args, "The compatibility event mirrors the semantic navigation request.")
 	assert_signal_emit_count(api, "navigation_requested", 1)
 	assert_signal_emit_count(api, "screen_requested", 1)
-	assert_signal_emit_count(api, "currency_balance_changed", 1)
 	assert_signal_emit_count(api, "action_rejected", 0)
+	assert_signal_emit_count(api, "currency_balance_changed", 1, "Duplicate completion must not credit currency twice.")
+
+
+func test_optional_reward_claim_is_idempotent_and_snapshot_restore_preserves_claims() -> void:
+	api.call("configure_levels", {"first": {"enabled": true, "scene_path": LEVEL_PATH}})
+	api.call("set_currency_balance", 100)
+	api.call("configure_completion_rewards", {"first": 25}, 600)
+	api.call("configure_optional_rewards", {"double_completion": 40})
+	var attempt: MetaPlayResult = api.call("begin_level_attempt", "first") as MetaPlayResult
+	var attempt_id: String = str(attempt.context.get("attempt_id", ""))
+	api.call("complete_level", attempt_id, 1, 10, null)
+	var claim: MetaPlayResult = api.call("claim_reward_doubling", attempt_id, "ad-token-1") as MetaPlayResult
+	var snapshot: Dictionary = api.call("export_session_state") as Dictionary
+	api.call("set_currency_balance", 777)
+	var restored: MetaPlayResult = api.call("restore_session_state", snapshot) as MetaPlayResult
+	var duplicate: MetaPlayResult = api.call("claim_reward_doubling", attempt_id, "ad-token-1") as MetaPlayResult
+
+	assert_eq(claim.context.get("amount"), 40)
+	assert_eq(restored.status, MetaPlayResult.Status.COMPLETED)
+	assert_eq(int(api.call("get_currency_balance")), 165)
+	assert_true(bool(duplicate.context.get("duplicate", false)))
+
+
+func test_invalid_snapshot_restore_is_atomic_and_negative_reward_configuration_is_rejected() -> void:
+	api.call("configure_levels", {"first": {"enabled": true, "scene_path": LEVEL_PATH}})
+	api.call("set_currency_balance", 300)
+	var negative_config: MetaPlayResult = api.call("configure_completion_rewards", {"first": -1}, 30) as MetaPlayResult
+	var invalid_snapshot: Dictionary = {"schema_version": 1, "levels": {"wrong": {}}, "currency_balance": 1, "completion_state": {"version": 1}}
+	var restore_result: MetaPlayResult = api.call("restore_session_state", invalid_snapshot) as MetaPlayResult
+
+	assert_eq(negative_config.status, MetaPlayResult.Status.REJECTED)
+	assert_eq(negative_config.code, &"reward.configuration_invalid")
+	assert_eq(restore_result.status, MetaPlayResult.Status.REJECTED)
+	assert_eq(restore_result.code, &"session.snapshot_invalid")
+	assert_eq(int(api.call("get_currency_balance")), 300)
+	assert_true((api.call("get_level", "first") as Dictionary).has("scene_path"))
 
 
 func test_level_selection_returns_distinct_codes_for_unknown_and_locked_levels() -> void:

@@ -42,6 +42,9 @@ signal item_purchased(item_path: Array)
 signal item_equipped(item_path: Array)
 signal currency_product_credited(product_key: Variant)
 signal store_catalog_changed()
+signal level_attempt_started(attempt_id: String, level_key: Variant)
+signal level_attempt_completed(attempt_id: String, result: Dictionary)
+signal reward_claim_completed(result: MetaPlayResult)
 
 # Legacy signals retained for existing integrations. New consumers should use
 # the semantic signals above.
@@ -134,6 +137,20 @@ func configure_items(items: Dictionary) -> void:
 
 func configure_currency_rewards(rewards: Dictionary) -> void:
 	_model.set_coin_values(rewards)
+
+
+func configure_completion_rewards(rewards: Dictionary, cooldown_seconds: int) -> MetaPlayResult:
+	var result: Dictionary = _model.configure_completion_rewards(rewards, cooldown_seconds)
+	if not bool(result.get("ok", false)):
+		return _reject_with_result(StringName(str(result.get("code", "reward.configuration_invalid"))), str(result.get("message", "Invalid completion reward configuration.")), result.get("context", {}) as Dictionary)
+	return MetaPlayResult.completed()
+
+
+func configure_optional_rewards(rewards: Dictionary) -> MetaPlayResult:
+	var result: Dictionary = _model.configure_optional_rewards(rewards)
+	if not bool(result.get("ok", false)):
+		return _reject_with_result(StringName(str(result.get("code", "reward.configuration_invalid"))), str(result.get("message", "Invalid optional reward configuration.")), result.get("context", {}) as Dictionary)
+	return MetaPlayResult.completed()
 
 
 func set_currency_balance(amount: int) -> void:
@@ -319,16 +336,22 @@ func _emit_pending_load_cancelled() -> void:
 	_load_terminal_emitting = false
 
 
+func begin_level_attempt(level_key: Variant) -> MetaPlayResult:
+	var outcome: Dictionary = _model.begin_attempt(level_key)
+	if not bool(outcome.get("ok", false)):
+		return _reject_with_result(StringName(str(outcome.get("code", "attempt.rejected"))), str(outcome.get("message", "Could not begin level attempt.")), {"level_key": level_key})
+	var attempt_id: String = str(outcome.get("attempt_id", ""))
+	level_attempt_started.emit(attempt_id, level_key)
+	return MetaPlayResult.completed(0, {"attempt_id": attempt_id, "level_key": level_key})
+
+
 func complete_level(
-		level_key: Variant,
+		attempt_id: String,
 		stars: int,
 		score: int,
-		reward_currency: int,
 		next_level_key: Variant = null
 	) -> MetaPlayResult:
-	var result: Dictionary = _model.complete_level(
-		level_key, stars, score, reward_currency, next_level_key
-	)
+	var result: Dictionary = _model.record_attempt_result(attempt_id, stars, score, next_level_key)
 	if not bool(result.get("ok", false)):
 		var failure_code: StringName = StringName(
 			str(result.get("code", RESULT_CODE_PROGRESSION_REJECTED))
@@ -336,27 +359,96 @@ func complete_level(
 		return _reject_with_result(
 			failure_code,
 			str(result.get("message", "Could not record level completion.")),
-			{"level_key": level_key}
+			{"attempt_id": attempt_id}
 		)
+	if bool(result.get("duplicate", false)):
+		var prior_reward: Dictionary = _model.reward_claims.get("base:%s" % attempt_id, {}) as Dictionary
+		result["reward_granted"] = bool(prior_reward.get("granted", false))
+		result["reward_amount"] = int(prior_reward.get("amount", 0))
+		result["coins"] = int(prior_reward.get("coins", _model.coins))
+		return MetaPlayResult.completed(0, result)
+	var level_key: Variant = result.get("level_key")
+	var reward: Dictionary = _model.claim_base_reward(attempt_id, int(Time.get_unix_time_from_system()))
+	if bool(reward.get("ok", false)):
+		reward_claim_completed.emit(MetaPlayResult.completed(0, reward))
+	result["reward_granted"] = bool(reward.get("granted", false))
+	result["reward_amount"] = int(reward.get("amount", 0))
+	result["reward_code"] = StringName(str(reward.get("code", "")))
+	result["coins"] = _model.coins
+	level_attempt_completed.emit(attempt_id, result.duplicate(true))
 	_emit_navigation("win", {
+		"attempt_id": attempt_id,
 		"level_key": level_key,
-		"stars": clampi(stars, 0, 3),
-		"score": maxi(0, score),
-		"coins": maxi(0, reward_currency),
+		"stars": int(result.get("stars", 0)),
+		"score": int(result.get("score", 0)),
+		"coins": int(result.get("reward_amount", 0)),
+		"currency_balance": _model.coins,
 		"next_level": next_level_key,
 	})
 	return MetaPlayResult.completed(0, {
+		"attempt_id": attempt_id,
 		"level_key": level_key,
-		"stars": clampi(stars, 0, 3),
-		"score": maxi(0, score),
-		"reward_currency": maxi(0, reward_currency),
+		"stars": int(result.get("stars", 0)),
+		"score": int(result.get("score", 0)),
 		"currency_balance": int(result.get("coins", _model.coins)),
+		"reward_granted": bool(result.get("reward_granted", false)),
+		"reward_amount": int(result.get("reward_amount", 0)),
 		"next_level_key": next_level_key,
+		"duplicate": bool(result.get("duplicate", false)),
 	})
 
 
-func report_level_loss(level_key: Variant) -> void:
-	_emit_navigation("lose", {"level_key": level_key})
+func claim_completion_reward(attempt_id: String) -> MetaPlayResult:
+	var result: Dictionary = _model.claim_base_reward(attempt_id, int(Time.get_unix_time_from_system()))
+	return _finish_reward_claim(result, "Could not claim completion reward.")
+
+
+func claim_optional_reward(attempt_id: String, claim_id: String, reward_type: StringName) -> MetaPlayResult:
+	var result: Dictionary = _model.claim_optional_reward(attempt_id, claim_id, reward_type)
+	return _finish_reward_claim(result, "Could not claim optional reward.")
+
+
+func _finish_reward_claim(outcome: Dictionary, fallback_message: String) -> MetaPlayResult:
+	if not bool(outcome.get("ok", false)):
+		return _reject_with_result(StringName(str(outcome.get("code", "reward.rejected"))), str(outcome.get("message", fallback_message)), outcome.get("context", {}) as Dictionary)
+	var response: MetaPlayResult = MetaPlayResult.completed(0, outcome)
+	if not bool(outcome.get("duplicate", false)):
+		reward_claim_completed.emit(response)
+	return response
+
+
+func export_session_state() -> Dictionary:
+	return {"schema_version": 1, "levels": _model.levels.duplicate(true), "currency_balance": _model.coins, "completion_state": _model.export_completion_state()}
+
+
+func restore_session_state(snapshot: Dictionary) -> MetaPlayResult:
+	if int(snapshot.get("schema_version", -1)) != 1:
+		return _reject_with_result(&"session.snapshot_unsupported", "The session snapshot version is unsupported.")
+	var raw_levels: Variant = snapshot.get("levels")
+	var raw_completion: Variant = snapshot.get("completion_state")
+	var balance: int = int(snapshot.get("currency_balance", -1))
+	if not raw_levels is Dictionary or not raw_completion is Dictionary or balance < 0:
+		return _reject_with_result(&"session.snapshot_invalid", "The session snapshot is incomplete or invalid.")
+	for level_key: Variant in (raw_levels as Dictionary).keys():
+		if not (raw_levels as Dictionary)[level_key] is Dictionary:
+			return _reject_with_result(&"session.snapshot_invalid", "The session snapshot contains invalid level data.", {"level_key": level_key})
+	var previous_levels: Dictionary = _model.levels.duplicate(true)
+	_model.levels = (raw_levels as Dictionary).duplicate(true)
+	if not _model.restore_completion_state(raw_completion as Dictionary):
+		_model.levels = previous_levels
+		return _reject_with_result(&"session.snapshot_invalid", "The session completion state is invalid.")
+	_model.set_coins(balance)
+	_model.levels_changed.emit()
+	return MetaPlayResult.completed(0, {"schema_version": 1})
+
+
+func report_level_loss(attempt_id: String) -> MetaPlayResult:
+	if not _model.mark_attempt_lost(attempt_id):
+		return _reject_with_result(&"attempt.stale", "The gameplay attempt cannot report a loss.", {"attempt_id": attempt_id})
+	var attempt: Dictionary = _model.attempts.get(attempt_id, {}) as Dictionary
+	var level_key: Variant = attempt.get("level_key")
+	_emit_navigation("lose", {"attempt_id": attempt_id, "level_key": level_key})
+	return MetaPlayResult.completed(0, {"attempt_id": attempt_id, "level_key": level_key})
 
 
 func retry_level(level_key: Variant) -> MetaPlayResult:
@@ -384,20 +476,27 @@ func load_next_level() -> MetaPlayResult:
 	return result
 
 
-func revive_after_reward(level_key: Variant) -> void:
-	var level: Dictionary = get_level(level_key)
-	if level.is_empty():
-		return
+func revive_after_reward(attempt_id: String) -> MetaPlayResult:
+	if not _model.revive_attempt(attempt_id):
+		return _reject_with_result(&"attempt.stale", "The gameplay attempt cannot be revived.", {"attempt_id": attempt_id})
+	var attempt: Dictionary = _model.attempts.get(attempt_id, {}) as Dictionary
+	var level: Dictionary = get_level(attempt.get("level_key"))
 	revive_reward_claimed.emit(level)
 	modal_lose_video_reward_showed.emit(level)
-	_emit_navigation("game", {"level_key": level_key, "revived": true})
+	_emit_navigation("game", {"attempt_id": attempt_id, "level_key": attempt.get("level_key"), "revived": true})
+	return MetaPlayResult.completed(0, {"attempt_id": attempt_id, "revived": true})
 
 
-func claim_reward_doubling(extra_currency: int) -> void:
-	_model.add_coins(extra_currency)
+func claim_reward_doubling(attempt_id: String, claim_id: String) -> MetaPlayResult:
+	var claim_result: MetaPlayResult = claim_optional_reward(attempt_id, claim_id, &"double_completion")
+	if claim_result.status != MetaPlayResult.Status.COMPLETED:
+		return claim_result
+	if bool(claim_result.context.get("duplicate", false)):
+		return claim_result
 	var next_level: Dictionary = get_level(get_next_available_level())
 	reward_doubling_claimed.emit(next_level, _model.coins)
 	modal_win_video_reward_showed.emit([next_level, _model.coins])
+	return claim_result
 
 
 func use_life() -> void:
@@ -645,12 +744,12 @@ func load_level(level_key: Variant) -> void:
 	request_level_load(level_key)
 
 
-func level_win(level_key: Variant, _data: Dictionary, stars: int, score: int, coins: int, next_key: Variant) -> void:
-	complete_level(level_key, stars, score, coins, next_key)
+func level_win(attempt_id: String, _data: Dictionary, stars: int, score: int, next_key: Variant) -> void:
+	complete_level(attempt_id, stars, score, next_key)
 
 
-func level_lose(level_key: Variant) -> void:
-	report_level_loss(level_key)
+func level_lose(attempt_id: String) -> void:
+	report_level_loss(attempt_id)
 
 
 func modal_win_retry_level(level_key: Variant) -> void:
@@ -677,16 +776,16 @@ func modal_win_next_level(_current_level_key: Variant) -> void:
 	load_next_level()
 
 
-func notify_modal_lose_video_reward(level_key: Variant) -> void:
-	revive_after_reward(level_key)
+func notify_modal_lose_video_reward(attempt_id: String) -> void:
+	revive_after_reward(attempt_id)
 
 
 func notify_modal_lose_use_life() -> void:
 	use_life()
 
 
-func notify_modal_win_video_reward(_level_key: Variant, extra_coins: int) -> void:
-	claim_reward_doubling(extra_coins)
+func notify_modal_win_video_reward(attempt_id: String, claim_id: String) -> void:
+	claim_reward_doubling(attempt_id, claim_id)
 
 
 func select_pause() -> void:

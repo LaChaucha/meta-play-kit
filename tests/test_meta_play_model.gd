@@ -66,15 +66,50 @@ func test_equipping_an_item_is_exclusive_within_its_group() -> void:
 	assert_true(bool(model.get_store_item(["space_hat"]).get("load", false)))
 
 
-func test_level_completion_keeps_records_unlocks_next_and_grants_reward() -> void:
-	var result: Dictionary = model.complete_level("level1", 2, 1250, 120, "level2")
+func test_attempt_result_is_idempotent_and_rewards_follow_configured_cooldown() -> void:
+	model.configure_completion_rewards({"level1": 120}, 3600)
+	var started: Dictionary = model.begin_attempt("level1")
+	var attempt_id: String = str(started.get("attempt_id", ""))
+	var result: Dictionary = model.record_attempt_result(attempt_id, 2, 1250, "level2")
+	var duplicate_result: Dictionary = model.record_attempt_result(attempt_id, 2, 1250, "level2")
+	var reward: Dictionary = model.claim_base_reward(attempt_id, 1000)
+	var duplicate_reward: Dictionary = model.claim_base_reward(attempt_id, 1001)
 
 	assert_true(bool(result.get("ok", false)))
+	assert_true(bool(duplicate_result.get("duplicate", false)))
 	assert_eq(model.get_level("level1").get("max_stars"), 2)
 	assert_eq(model.get_level("level1").get("max_score"), 1250)
 	assert_true(bool(model.get_level("level2").get("enabled", false)))
+	assert_true(bool(reward.get("granted", false)))
+	assert_true(bool(duplicate_reward.get("duplicate", false)))
 	assert_eq(model.coins, 920)
 	assert_eq(model.get_next_level_to_play(), "level2")
+
+	var replay: Dictionary = model.begin_attempt("level1")
+	var replay_id: String = str(replay.get("attempt_id", ""))
+	model.record_attempt_result(replay_id, 3, 1400, "level2")
+	var cooldown: Dictionary = model.claim_base_reward(replay_id, 2000)
+	assert_false(bool(cooldown.get("ok", true)))
+	assert_eq(cooldown.get("code"), &"reward.cooldown_active")
+	var after_cooldown: Dictionary = model.claim_base_reward(replay_id, 4600)
+	assert_true(bool(after_cooldown.get("granted", false)))
+	assert_eq(model.coins, 1040)
+
+
+func test_optional_reward_uses_host_claim_id_and_never_trusts_caller_amount() -> void:
+	model.configure_optional_rewards({"double_completion": 120})
+	var started: Dictionary = model.begin_attempt("level1")
+	var attempt_id: String = str(started.get("attempt_id", ""))
+	model.record_attempt_result(attempt_id, 1, 10, null)
+	var claim: Dictionary = model.claim_optional_reward(attempt_id, "provider-claim-1", &"double_completion")
+	var duplicate: Dictionary = model.claim_optional_reward(attempt_id, "provider-claim-1", &"double_completion")
+	var collision: Dictionary = model.claim_optional_reward(attempt_id, "provider-claim-1", &"other")
+
+	assert_eq(claim.get("amount"), 120)
+	assert_true(bool(duplicate.get("duplicate", false)))
+	assert_false(bool(collision.get("ok", true)))
+	assert_eq(collision.get("code"), &"reward.claim_id_conflict")
+	assert_eq(model.coins, 920)
 
 
 func test_currency_product_and_number_formatting() -> void:

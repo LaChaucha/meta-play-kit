@@ -30,6 +30,7 @@ var _result_payload: Dictionary = {}
 var _initial_boot: bool = true
 var _current_level_node: Node = null
 var _loading_operation_id: int = 0
+var _current_attempt_id: String = ""
 
 
 func _ready() -> void:
@@ -93,6 +94,18 @@ func show_level(level_data: Dictionary, resource: Resource) -> bool:
 	level_node.name = "CurrentLevel"
 	_current_level_node = level_node
 	_current_level_key = level_key
+	_current_attempt_id = ""
+	if not _initial_boot:
+		var attempt_result: MetaPlayResult = TtpGuiApi.begin_level_attempt(level_key)
+		if attempt_result.status != MetaPlayResult.Status.COMPLETED:
+			remove_child(level_node)
+			level_node.queue_free()
+			_current_level_node = null
+			_on_operation_rejected("No se pudo iniciar la partida.")
+			return false
+		_current_attempt_id = str(attempt_result.context.get("attempt_id", ""))
+		if level_node.has_method("configure_attempt"):
+			level_node.call("configure_attempt", _current_attempt_id)
 	return true
 
 
@@ -130,9 +143,11 @@ func update_music_game_configuration(enabled: bool) -> void:
 	_show_toast("Música activa" if enabled else "Música silenciada")
 
 
-func level_win(level_key: Variant, stars: int, score: int, reward_coins: int) -> void:
-	var next_level: Variant = unlock_next_level(level_key)
-	TtpGuiApi.complete_level(level_key, stars, score, reward_coins, next_level)
+func level_win(attempt_id: String, stars: int, score: int) -> void:
+	var next_level: Variant = unlock_next_level(_current_level_key)
+	var result: MetaPlayResult = TtpGuiApi.complete_level(attempt_id, stars, score, next_level)
+	if result.status != MetaPlayResult.Status.COMPLETED:
+		return
 
 
 func unlock_next_level(current_level: Variant) -> Variant:
@@ -151,8 +166,8 @@ func load_next_level(level: Dictionary) -> void:
 	change_current_level(next_level)
 
 
-func level_lose(level_key: Variant) -> void:
-	TtpGuiApi.report_level_loss(level_key)
+func level_lose(attempt_id: String) -> void:
+	TtpGuiApi.report_level_loss(attempt_id)
 
 
 func revive_level(_level: Dictionary) -> void:
@@ -409,6 +424,8 @@ func _configure_demo_data() -> void:
 		"coins_large": {"title": "Tesoro total", "description": "4.000 monedas", "price": "USD 4,99", "bought": false},
 	})
 	TtpGuiApi.configure_currency_rewards({"coins_small": 500, "coins_medium": 1500, "coins_large": 4000})
+	TtpGuiApi.configure_completion_rewards({"level1": 120, "level2": 120, "level3": 120, "level4": 120, "level5": 120, "level6": 120}, 86400)
+	TtpGuiApi.configure_optional_rewards({"double_completion": 120})
 	TtpGuiApi.configure_items({
 		"sun_hat": {"type": 1, "title": "Sombrero solar", "description": "El clásico del kit", "price": "0", "bought": true, "load": true, "group": "hat", "colorTitle": "#7a2d21"},
 		"space_hat": {"type": 1, "title": "Casco espacial", "description": "Un look de otro mundo", "price": "450", "bought": false, "load": false, "group": "hat", "colorTitle": "#7a2d21"},
@@ -633,14 +650,14 @@ func _simulate_win() -> void:
 	if _current_level_node != null and is_instance_valid(_current_level_node) and _current_level_node.has_method("level_win"):
 		_current_level_node.call("level_win")
 	else:
-		level_win(_current_level_key, 3, 1250, 120)
+		level_win(_current_attempt_id, 3, 1250)
 
 
 func _simulate_lose() -> void:
 	if _current_level_node != null and is_instance_valid(_current_level_node) and _current_level_node.has_method("level_lose"):
 		_current_level_node.call("level_lose")
 	else:
-		level_lose(_current_level_key)
+		level_lose(_current_attempt_id)
 
 
 func _show_win(payload: Dictionary) -> void:
@@ -711,11 +728,11 @@ func _show_reward_wait(message: String, is_win: bool) -> void:
 	tween.tween_property(progress, "value", 1.0, 1.2)
 	await tween.finished
 	if is_win:
-		TtpGuiApi.claim_reward_doubling(int(_result_payload.get("coins", 0)))
+		TtpGuiApi.claim_reward_doubling(_current_attempt_id, "demo-double-%s" % _current_attempt_id)
 		_show_toast("Monedas duplicadas")
 		_next_level()
 	else:
-		TtpGuiApi.revive_after_reward(_current_level_key)
+		TtpGuiApi.revive_after_reward(_current_attempt_id)
 
 
 func _show_pause() -> void:

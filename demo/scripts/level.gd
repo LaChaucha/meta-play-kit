@@ -13,11 +13,16 @@ signal revived()
 var stage: Node = null
 var level_key: Variant = null
 var active: bool = false
+var attempt_id: String = ""
 
 
 func configure(new_level_key: Variant, host_stage: Node) -> void:
 	level_key = new_level_key
 	stage = host_stage
+
+
+func configure_attempt(new_attempt_id: String) -> void:
+	attempt_id = new_attempt_id
 
 
 func start_level() -> bool:
@@ -37,7 +42,7 @@ func level_win() -> void:
 	stop_level()
 	won.emit()
 	if stage != null and stage.has_method("level_win"):
-		stage.call("level_win", level_key, 3, 1250, 120)
+		stage.call("level_win", attempt_id, 3, 1250)
 
 
 func level_lose() -> void:
@@ -46,7 +51,7 @@ func level_lose() -> void:
 	stop_level()
 	lost.emit()
 	if stage != null and stage.has_method("level_lose"):
-		stage.call("level_lose", level_key)
+		stage.call("level_lose", attempt_id)
 
 
 func revive() -> void:
