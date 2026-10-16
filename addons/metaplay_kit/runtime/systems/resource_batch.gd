@@ -50,9 +50,15 @@ func start_loading(p_min_stage_time: int = 100) -> void:
 func get_resource(path: String) -> Resource:
 	if not _ready.has(path):
 		return null
-	var resource: Resource = _ready[path] as Resource
+	var resource: Resource = peek_resource(path)
 	_ready.erase(path)
 	return resource
+
+
+func peek_resource(path: String) -> Resource:
+	if not _ready.has(path):
+		return null
+	return _ready[path] as Resource
 
 
 func get_total_progress() -> float:

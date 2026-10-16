@@ -6,7 +6,7 @@ extends Node
 const LEVEL_LOAD_BUSY_MESSAGE: String = "A level load is already in progress."
 
 signal level_load_started(operation_id: int, level_data: Dictionary)
-signal level_load_completed(operation_id: int, level_data: Dictionary)
+signal level_load_completed(operation_id: int, level_data: Dictionary, resource: Resource)
 signal level_load_failed(operation_id: int, level_data: Dictionary, message: String)
 signal level_load_cancelled(operation_id: int, level_data: Dictionary)
 signal level_load_exit_animation_completed(operation_id: int)
@@ -37,7 +37,7 @@ signal modal_win_retry_button_pressed(level_data: Dictionary)
 signal modal_win_load_next_level_pressed(level_data: Dictionary)
 signal home_tap_to_play_pressed()
 signal loading_started(operation_id: int, level_data: Dictionary)
-signal loading_completed(operation_id: int, level_data: Dictionary)
+signal loading_completed(operation_id: int, level_data: Dictionary, resource: Resource)
 signal level_selector_load_new_level_selected(level_data: Dictionary)
 signal loading_exit_animation_completed(operation_id: int)
 signal store_game_update_item_loadded(item_key: Variant)
@@ -377,11 +377,15 @@ func _on_batch_finished() -> void:
 		return
 	var operation_id: int = _active_load_operation_id
 	var level_data: Dictionary = _loading_level.duplicate(true)
+	var resource: Resource = _resource_batch.peek_resource(_loading_path)
+	if resource == null:
+		_on_batch_failed(_loading_path, "The loaded level resource is unavailable.")
+		return
 	_load_request_active = false
 	_active_load_operation_id = 0
 	_load_terminal_emitting = true
-	level_load_completed.emit(operation_id, level_data)
-	loading_completed.emit(operation_id, level_data)
+	level_load_completed.emit(operation_id, level_data, resource)
+	loading_completed.emit(operation_id, level_data, resource)
 	_load_terminal_emitting = false
 	call_deferred("_emit_loading_exit", operation_id)
 

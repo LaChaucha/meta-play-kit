@@ -73,15 +73,15 @@ El primer nivel se carga e instancia, pero el primer arranque termina en inicio;
 
 ## Flujo de carga de niveles
 
-La carga tiene una clave activa y una clave pendiente. `MetaPlayDemoStage._loading_level_key` identifica el destino que se está cargando; `_current_level_key` sólo cambia cuando el recurso se instancia correctamente.
+`MetaPlayDemoStage._loading_operation_id` identifica la carga pendiente; la clave y el recurso de destino llegan juntos en el resultado. `_current_level_key` sólo cambia cuando el candidato se configura e inicia correctamente.
 
 1. La UI solicita `TtpGuiApi.request_level_load(key)` o una acción de fachada equivalente. Cada solicitud aceptada recibe un `operation_id` monotónico; las solicitudes rechazadas no emiten eventos del ciclo de carga.
 2. La fachada busca el nivel en el modelo, copia su definición y añade `key` al diccionario enviado a `loading_started`.
-3. El stage guarda la clave pendiente, despausa el árbol, detiene el nivel actual, oculta el juego y muestra el overlay.
+3. El stage guarda el ID de operación, usa los datos de inicio para mostrar la ruta en el overlay, despausa el árbol, detiene el nivel actual y oculta el juego.
 4. `ResourceBatch` solicita el recurso con `ResourceLoader.load_threaded_request`, actualiza progreso y obtiene el `Resource` cuando termina.
 5. Al terminar, `ResourceBatch` libera la lista activa antes de emitir finalización. Esto permite cargar la misma escena otra vez (por ejemplo, al repetir o pasar de nivel).
-6. La fachada emite `level_load_completed(operation_id, level_data)`; el stage correlaciona el ID y convierte el recurso en `PackedScene` para instanciarlo. Los fallos del cargador emiten `level_load_failed(operation_id, level_data, message)` y nunca éxito para el mismo ID.
-7. Sólo después de una instancia válida se reemplaza `CurrentLevel`, se configura con clave y stage anfitrión, se actualiza la clave activa y se llama `start_level()`.
+6. La fachada recupera el recurso de esa operación y emite `level_load_completed(operation_id, level_data, resource)`; el stage correlaciona el ID y convierte el recurso recibido en `PackedScene` para instanciarlo. Los fallos del cargador o un resultado sin recurso emiten `level_load_failed(operation_id, level_data, message)` y nunca éxito para el mismo ID.
+7. El stage configura e inicia un candidato temporal. Sólo si ambos pasos tienen éxito reemplaza `CurrentLevel` y actualiza la clave activa.
 8. Si la instancia falla, el stage muestra un aviso y vuelve a inicio sin presentar una partida falsa ni cambiar la clave activa.
 9. El overlay completa su animación y el stage muestra inicio en el primer arranque o la pantalla de juego en cargas posteriores.
 

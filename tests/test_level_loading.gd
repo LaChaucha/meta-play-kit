@@ -1,7 +1,9 @@
 extends "res://tests/test_case.gd"
 
 const BatchScript: GDScript = preload("res://addons/metaplay_kit/runtime/systems/resource_batch.gd")
+const FailingStartLevel: GDScript = preload("res://tests/fixtures/failing_start_level.gd")
 const LEVEL_PATH: String = "res://demo/scenes/level_stub.tscn"
+const LEVEL_SCENE: PackedScene = preload("res://demo/scenes/level_stub.tscn")
 
 
 func test_concurrent_level_request_is_rejected_and_selection_signals_follow_acceptance() -> void:
@@ -17,12 +19,19 @@ func test_concurrent_level_request_is_rejected_and_selection_signals_follow_acce
 	var retry_events: Array[Dictionary] = []
 	var next_level_events: Array[Dictionary] = []
 	var started_operation_ids: Array[int] = []
+	var completed_operation_ids: Array[int] = []
+	var completed_level_keys: Array[String] = []
+	var completed_resources: Array[Resource] = []
 	var rejected_callback: Callable = func(message: String) -> void: rejected_messages.append(message)
 	var selected_callback: Callable = func(level_data: Dictionary) -> void: selected_levels.append(level_data)
 	var legacy_selected_callback: Callable = func(level_data: Dictionary) -> void: legacy_selected_levels.append(level_data)
 	var started_callback: Callable = func(operation_id: int, level_data: Dictionary) -> void:
 		started_operation_ids.append(operation_id)
 		started_level_keys.append(str(level_data.get("key", "")))
+	var completed_callback: Callable = func(operation_id: int, level_data: Dictionary, resource: Resource) -> void:
+		completed_operation_ids.append(operation_id)
+		completed_level_keys.append(str(level_data.get("key", "")))
+		completed_resources.append(resource)
 	var play_callback: Callable = func() -> void: play_events.append(true)
 	var retry_callback: Callable = func(level_data: Dictionary) -> void: retry_events.append(level_data)
 	var next_level_callback: Callable = func(level_data: Dictionary) -> void: next_level_events.append(level_data)
@@ -30,6 +39,7 @@ func test_concurrent_level_request_is_rejected_and_selection_signals_follow_acce
 	TtpGuiApi.level_selected.connect(selected_callback)
 	TtpGuiApi.level_selector_load_new_level_selected.connect(legacy_selected_callback)
 	TtpGuiApi.level_load_started.connect(started_callback)
+	TtpGuiApi.level_load_completed.connect(completed_callback)
 	TtpGuiApi.play_requested.connect(play_callback)
 	TtpGuiApi.home_tap_to_play_pressed.connect(play_callback)
 	TtpGuiApi.level_retry_requested.connect(retry_callback)
@@ -64,10 +74,15 @@ func test_concurrent_level_request_is_rejected_and_selection_signals_follow_acce
 
 	var first_finished: bool = await wait_until(func() -> bool: return not TtpGuiApi.is_loading())
 	if not assert_true(first_finished, "The accepted request must eventually release the single-load slot."):
-		_disconnect_load_arbitration_test_signals(rejected_callback, selected_callback, legacy_selected_callback, started_callback, play_callback, retry_callback, next_level_callback)
+		_disconnect_load_arbitration_test_signals(rejected_callback, selected_callback, legacy_selected_callback, started_callback, completed_callback, play_callback, retry_callback, next_level_callback)
 		return
+	assert_eq(completed_operation_ids, [started_operation_ids[0]])
+	assert_eq(completed_level_keys, ["first"])
+	assert_eq(completed_resources[0].resource_path, LEVEL_PATH)
+	assert_is(completed_resources[0], PackedScene)
 	var first_resource: Resource = TtpGuiApi.get_loaded_resource(LEVEL_PATH)
 	assert_is(first_resource, PackedScene)
+	assert_eq(first_resource.get_instance_id(), completed_resources[0].get_instance_id())
 
 	TtpGuiApi.select_level("second")
 	assert_eq(selected_levels.size(), 2, "A new request should be accepted after the first operation finishes.")
@@ -75,11 +90,16 @@ func test_concurrent_level_request_is_rejected_and_selection_signals_follow_acce
 	assert_ne(started_operation_ids[0], started_operation_ids[1], "Repeated scene requests get distinct operation IDs.")
 	var second_finished: bool = await wait_until(func() -> bool: return not TtpGuiApi.is_loading())
 	if not assert_true(second_finished):
-		_disconnect_load_arbitration_test_signals(rejected_callback, selected_callback, legacy_selected_callback, started_callback, play_callback, retry_callback, next_level_callback)
+		_disconnect_load_arbitration_test_signals(rejected_callback, selected_callback, legacy_selected_callback, started_callback, completed_callback, play_callback, retry_callback, next_level_callback)
 		return
+	assert_eq(completed_operation_ids, started_operation_ids)
+	assert_eq(completed_level_keys, ["first", "second"], "Repeated scene loads must return their own level data.")
+	assert_eq(completed_resources[1].resource_path, LEVEL_PATH)
+	assert_is(completed_resources[1], PackedScene)
 	var second_resource: Resource = TtpGuiApi.get_loaded_resource(LEVEL_PATH)
 	assert_is(second_resource, PackedScene)
-	_disconnect_load_arbitration_test_signals(rejected_callback, selected_callback, legacy_selected_callback, started_callback, play_callback, retry_callback, next_level_callback)
+	assert_eq(second_resource.get_instance_id(), completed_resources[1].get_instance_id())
+	_disconnect_load_arbitration_test_signals(rejected_callback, selected_callback, legacy_selected_callback, started_callback, completed_callback, play_callback, retry_callback, next_level_callback)
 
 
 func _disconnect_load_arbitration_test_signals(
@@ -87,6 +107,7 @@ func _disconnect_load_arbitration_test_signals(
 		selected_callback: Callable,
 		legacy_selected_callback: Callable,
 		started_callback: Callable,
+		completed_callback: Callable,
 		play_callback: Callable,
 		retry_callback: Callable,
 		next_level_callback: Callable
@@ -95,6 +116,7 @@ func _disconnect_load_arbitration_test_signals(
 	TtpGuiApi.level_selected.disconnect(selected_callback)
 	TtpGuiApi.level_selector_load_new_level_selected.disconnect(legacy_selected_callback)
 	TtpGuiApi.level_load_started.disconnect(started_callback)
+	TtpGuiApi.level_load_completed.disconnect(completed_callback)
 	TtpGuiApi.play_requested.disconnect(play_callback)
 	TtpGuiApi.home_tap_to_play_pressed.disconnect(play_callback)
 	TtpGuiApi.level_retry_requested.disconnect(retry_callback)
@@ -131,7 +153,7 @@ func test_failed_load_emits_one_correlated_terminal_event() -> void:
 	var failed_ids: Array[int] = []
 	var terminal_loading_states: Array[bool] = []
 	var started_callback: Callable = func(operation_id: int, _data: Dictionary) -> void: started_ids.append(operation_id)
-	var completed_callback: Callable = func(operation_id: int, _data: Dictionary) -> void: completed_ids.append(operation_id)
+	var completed_callback: Callable = func(operation_id: int, _data: Dictionary, _resource: Resource) -> void: completed_ids.append(operation_id)
 	var failed_callback: Callable = func(operation_id: int, _data: Dictionary, _message: String) -> void:
 		failed_ids.append(operation_id)
 		terminal_loading_states.append(TtpGuiApi.is_loading())
@@ -160,8 +182,9 @@ func test_successful_load_closes_operation_before_terminal_signal() -> void:
 	var terminal_loading_states: Array[bool] = []
 	var started_callback: Callable = func(operation_id: int, _data: Dictionary) -> void: started_ids.append(operation_id)
 	var progress_callback: Callable = func(operation_id: int, _progress: float) -> void: progress_ids.append(operation_id)
-	var completed_callback: Callable = func(operation_id: int, _data: Dictionary) -> void:
+	var completed_callback: Callable = func(operation_id: int, _data: Dictionary, resource: Resource) -> void:
 		completed_ids.append(operation_id)
+		assert_is(resource, PackedScene)
 		terminal_loading_states.append(TtpGuiApi.is_loading())
 	TtpGuiApi.level_load_started.connect(started_callback)
 	TtpGuiApi.loading_progress_changed.connect(progress_callback)
@@ -216,3 +239,23 @@ func test_uninstantiable_level_returns_home_without_showing_game() -> void:
 	assert_false(game.visible, "La pantalla de juego necesita una instancia válida.")
 	assert_true(home.visible)
 	assert_eq(stage.get("_current_level_key"), "level1", "Un fallo no debe cambiar el nivel activo.")
+
+
+func test_level_that_fails_to_start_does_not_replace_active_level() -> void:
+	var stage: Node = add_scene("res://demo/scenes/main.tscn")
+	var boot_finished: bool = await wait_until(func() -> bool: return not TtpGuiApi.is_loading())
+	if not assert_true(boot_finished):
+		return
+	var previous_level: Node = stage.get_node("CurrentLevel")
+	stage.call("_on_loading_completed", 999, {"key": "stale", "scene_path": LEVEL_PATH}, LEVEL_SCENE)
+	assert_eq(stage.get("_current_level_key"), "level1", "A stale result must not change the active level key.")
+	assert_eq(stage.get_node("CurrentLevel").get_instance_id(), previous_level.get_instance_id(), "A stale result must not replace the current level.")
+	var candidate: Node = Node.new()
+	candidate.set_script(FailingStartLevel)
+	var packed_scene: PackedScene = PackedScene.new()
+	assert_eq(packed_scene.pack(candidate), OK)
+	candidate.free()
+	var show_result: Variant = stage.call("show_level", {"key": "failed_start"}, packed_scene)
+	assert_false(bool(show_result), "A level that refuses to start must be rejected.")
+	assert_eq(stage.get("_current_level_key"), "level1", "The active key must remain unchanged on start failure.")
+	assert_eq(stage.get_node("CurrentLevel").get_instance_id(), previous_level.get_instance_id(), "The existing level instance must remain installed.")
