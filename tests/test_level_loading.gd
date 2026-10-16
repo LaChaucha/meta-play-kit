@@ -179,21 +179,31 @@ func test_failed_operation_can_be_retried_as_a_new_operation() -> void:
 	})
 	var started_ids: Array[int] = []
 	var failed_ids: Array[int] = []
+	var progress_ids: Array[int] = []
+	var progress_values: Array[float] = []
 	var completed_ids: Array[int] = []
 	var completed_resources: Array[Resource] = []
-	var started_callback: Callable = func(operation_id: int, _data: Dictionary) -> void:
-		started_ids.append(operation_id)
-		if started_ids.size() == 1:
-			TtpGuiApi._on_batch_failed(LEVEL_PATH, "Synthetic first-operation failure")
+	var force_first_failure: Array[bool] = [true]
+	var started_callback: Callable = func(operation_id: int, _data: Dictionary) -> void: started_ids.append(operation_id)
 	var failed_callback: Callable = func(operation_id: int, _data: Dictionary, _message: String) -> void: failed_ids.append(operation_id)
+	var progress_callback: Callable = func(operation_id: int, progress: float) -> void:
+		progress_ids.append(operation_id)
+		progress_values.append(progress)
+		if force_first_failure[0] and progress == 0.0:
+			force_first_failure[0] = false
+			TtpGuiApi._on_loading_progress(1.0)
+			TtpGuiApi._on_batch_failed(LEVEL_PATH, "Synthetic first-operation failure")
 	var completed_callback: Callable = func(operation_id: int, _data: Dictionary, resource: Resource) -> void:
 		completed_ids.append(operation_id)
 		completed_resources.append(resource)
 	TtpGuiApi.level_load_started.connect(started_callback)
 	TtpGuiApi.level_load_failed.connect(failed_callback)
+	TtpGuiApi.loading_progress_changed.connect(progress_callback)
 	TtpGuiApi.level_load_completed.connect(completed_callback)
 	assert_true(TtpGuiApi.request_level_load("retry"))
 	assert_eq(failed_ids, [started_ids[0]])
+	assert_eq(progress_ids, [started_ids[0], started_ids[0]])
+	assert_eq(progress_values, [0.0, 1.0], "Full progress does not turn a failed operation into success.")
 	assert_false(TtpGuiApi.is_loading())
 	assert_true(TtpGuiApi.request_level_load("retry"), "The same key and path can be requested after failure.")
 	var retry_finished: bool = await wait_until(func() -> bool: return not TtpGuiApi.is_loading())
@@ -204,8 +214,15 @@ func test_failed_operation_can_be_retried_as_a_new_operation() -> void:
 	assert_eq(completed_resources.size(), 1)
 	assert_is(completed_resources[0], PackedScene)
 	assert_eq(completed_resources[0].resource_path, LEVEL_PATH)
+	var retry_progress_values: Array[float] = []
+	for progress_index: int in range(progress_ids.size()):
+		if progress_ids[progress_index] == started_ids[1]:
+			retry_progress_values.append(progress_values[progress_index])
+	assert_false(retry_progress_values.is_empty())
+	assert_eq(retry_progress_values[0], 0.0, "A new operation starts its progress at zero.")
 	TtpGuiApi.level_load_started.disconnect(started_callback)
 	TtpGuiApi.level_load_failed.disconnect(failed_callback)
+	TtpGuiApi.loading_progress_changed.disconnect(progress_callback)
 	TtpGuiApi.level_load_completed.disconnect(completed_callback)
 
 
@@ -215,10 +232,13 @@ func test_successful_load_closes_operation_before_terminal_signal() -> void:
 	})
 	var started_ids: Array[int] = []
 	var progress_ids: Array[int] = []
+	var progress_values: Array[float] = []
 	var completed_ids: Array[int] = []
 	var terminal_loading_states: Array[bool] = []
 	var started_callback: Callable = func(operation_id: int, _data: Dictionary) -> void: started_ids.append(operation_id)
-	var progress_callback: Callable = func(operation_id: int, _progress: float) -> void: progress_ids.append(operation_id)
+	var progress_callback: Callable = func(operation_id: int, progress: float) -> void:
+		progress_ids.append(operation_id)
+		progress_values.append(progress)
 	var completed_callback: Callable = func(operation_id: int, _data: Dictionary, resource: Resource) -> void:
 		completed_ids.append(operation_id)
 		assert_is(resource, PackedScene)
@@ -234,10 +254,49 @@ func test_successful_load_closes_operation_before_terminal_signal() -> void:
 	assert_false(progress_ids.is_empty(), "The loader should report progress for an accepted operation.")
 	for progress_id: int in progress_ids:
 		assert_eq(progress_id, started_ids[0], "Progress must be correlated to the active operation.")
+	assert_eq(progress_values[0], 0.0, "An accepted operation begins at zero progress.")
+	assert_eq(progress_values.back(), 1.0, "Successful completion is preceded by full progress.")
+	var previous_progress: float = 0.0
+	for progress: float in progress_values:
+		assert_true(progress >= 0.0 and progress <= 1.0, "Progress stays within the inclusive normalized range.")
+		assert_true(progress >= previous_progress, "Progress does not decrease within an operation.")
+		previous_progress = progress
 	assert_eq(terminal_loading_states, [false], "The operation is closed before its terminal signal is delivered.")
 	TtpGuiApi.level_load_started.disconnect(started_callback)
 	TtpGuiApi.loading_progress_changed.disconnect(progress_callback)
 	TtpGuiApi.level_load_completed.disconnect(completed_callback)
+
+
+func test_load_progress_is_clamped_and_monotonic() -> void:
+	TtpGuiApi.configure_levels({
+		"first": {"name": "First", "enabled": true, "scene_path": LEVEL_PATH},
+	})
+	var started_ids: Array[int] = []
+	var progress_ids: Array[int] = []
+	var progress_values: Array[float] = []
+	var injected_values: Array[bool] = [false]
+	var progress_callback: Callable = func(operation_id: int, progress: float) -> void:
+		progress_ids.append(operation_id)
+		progress_values.append(progress)
+		if not injected_values[0]:
+			injected_values[0] = true
+			TtpGuiApi._on_loading_progress(0.75)
+			TtpGuiApi._on_loading_progress(0.5)
+			TtpGuiApi._on_loading_progress(1.5)
+			TtpGuiApi._on_loading_progress(-0.25)
+			TtpGuiApi._on_loading_progress(NAN)
+	var started_callback: Callable = func(operation_id: int, _data: Dictionary) -> void: started_ids.append(operation_id)
+	TtpGuiApi.level_load_started.connect(started_callback)
+	TtpGuiApi.loading_progress_changed.connect(progress_callback)
+	assert_true(TtpGuiApi.request_level_load("first"))
+	var finished: bool = await wait_until(func() -> bool: return not TtpGuiApi.is_loading())
+	assert_true(finished)
+	assert_eq(progress_values, [0.0, 0.75, 1.0], "Out-of-range and decreasing updates are normalized or ignored.")
+	assert_eq(progress_ids.size(), progress_values.size())
+	for progress_id: int in progress_ids:
+		assert_eq(progress_id, started_ids[0], "Every update is correlated to the accepted operation.")
+	TtpGuiApi.level_load_started.disconnect(started_callback)
+	TtpGuiApi.loading_progress_changed.disconnect(progress_callback)
 
 
 func test_cancellation_closes_operation_once_and_allows_a_new_request() -> void:
@@ -251,10 +310,15 @@ func test_cancellation_closes_operation_once_and_allows_a_new_request() -> void:
 	var completed_resources: Array[Resource] = []
 	var cancellation_states: Array[bool] = []
 	var cancel_results: Array[bool] = []
+	var cancellation_progress_values: Array[float] = []
 	var started_callback: Callable = func(operation_id: int, _data: Dictionary) -> void: started_ids.append(operation_id)
-	var progress_callback: Callable = func(operation_id: int, _progress: float) -> void:
+	var progress_callback: Callable = func(operation_id: int, progress: float) -> void:
+		cancellation_progress_values.append(progress)
 		if cancel_results.is_empty():
-			cancel_results.append(TtpGuiApi.cancel_level_load(operation_id))
+			if progress < 1.0:
+				TtpGuiApi._on_loading_progress(1.0)
+			else:
+				cancel_results.append(TtpGuiApi.cancel_level_load(operation_id))
 	var cancelled_callback: Callable = func(operation_id: int, _data: Dictionary) -> void:
 		cancelled_ids.append(operation_id)
 		cancellation_states.append(TtpGuiApi.is_loading())
@@ -267,11 +331,13 @@ func test_cancellation_closes_operation_once_and_allows_a_new_request() -> void:
 	TtpGuiApi.level_load_completed.connect(completed_callback)
 	assert_true(TtpGuiApi.request_level_load("first"))
 	assert_eq(cancel_results, [true], "The active operation can be cancelled during progress delivery.")
+	assert_eq(cancellation_progress_values, [0.0, 1.0], "Cancellation remains a distinct terminal result even at full progress.")
 	assert_eq(cancelled_ids, started_ids)
 	assert_eq(cancellation_states, [false], "is_loading() is false when cancellation is reported.")
 	assert_true(completed_ids.is_empty(), "Cancellation must suppress success for the same operation.")
 	var cancelled_operation_id: int = cancelled_ids[0]
 	TtpGuiApi._on_loading_progress(0.5)
+	assert_eq(cancellation_progress_values, [0.0, 1.0], "Late progress from a cancelled operation is ignored.")
 	TtpGuiApi._on_batch_finished()
 	TtpGuiApi._on_batch_failed(LEVEL_PATH, "Late failure callback")
 	assert_true(completed_ids.is_empty(), "Late loader callbacks must not publish a terminal result.")

@@ -73,6 +73,8 @@ var _load_start_signals_emitting: bool = false
 var _is_shutting_down: bool = false
 var _next_load_operation_id: int = 0
 var _active_load_operation_id: int = 0
+var _active_load_progress: float = 0.0
+var _active_load_progress_emitted: bool = false
 var _pending_cancelled_operation_id: int = 0
 var _pending_cancelled_level_data: Dictionary = {}
 
@@ -206,6 +208,8 @@ func request_level_load(level_key: Variant) -> bool:
 	_loading_path = scene_path
 	_next_load_operation_id += 1
 	_active_load_operation_id = _next_load_operation_id
+	_active_load_progress = 0.0
+	_active_load_progress_emitted = false
 	_load_request_active = true
 	var level_data: Dictionary = _loading_level.duplicate(true)
 	var operation_id: int = _active_load_operation_id
@@ -216,6 +220,9 @@ func request_level_load(level_key: Variant) -> bool:
 	if _pending_cancelled_operation_id == operation_id:
 		_emit_pending_load_cancelled()
 		return true
+	if not _load_request_active or _active_load_operation_id != operation_id or _is_shutting_down:
+		return true
+	_on_loading_progress(0.0)
 	if not _load_request_active or _active_load_operation_id != operation_id or _is_shutting_down:
 		return true
 	_resource_batch.add_resource_to_batch(_loading_path)
@@ -429,8 +436,16 @@ func _on_store_changed() -> void:
 
 
 func _on_loading_progress(progress: float) -> void:
-	if _load_request_active:
-		loading_progress_changed.emit(_active_load_operation_id, progress)
+	if not _load_request_active or not is_finite(progress):
+		return
+	var normalized_progress: float = clampf(progress, 0.0, 1.0)
+	if normalized_progress < _active_load_progress:
+		normalized_progress = _active_load_progress
+	if _active_load_progress_emitted and is_equal_approx(normalized_progress, _active_load_progress):
+		return
+	_active_load_progress = normalized_progress
+	_active_load_progress_emitted = true
+	loading_progress_changed.emit(_active_load_operation_id, _active_load_progress)
 
 
 func _on_batch_finished() -> void:

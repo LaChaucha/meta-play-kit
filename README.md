@@ -80,7 +80,7 @@ A level entry uses `name`, `max_score`, `max_stars`, `scene_path`, and `enabled`
 
 ### Loading integration
 
-Connect before requesting the initial level. Every accepted request gets a monotonically increasing `operation_id`. The start, progress, and terminal signals carry that same ID, so a host can correlate events even when the same scene is requested repeatedly. Each accepted operation emits exactly one terminal result: `level_load_completed`, `level_load_failed`, or `level_load_cancelled`. A successful completion includes the exact loaded `Resource` and level definition for that operation. Rejected requests emit no load lifecycle events. `get_loaded_resource(path)` remains as a compatibility helper and consumes the ready resource; new integrations should use the resource delivered by the completion signal.
+Connect before requesting the initial level. Every accepted request gets a monotonically increasing `operation_id`. The start, progress, and terminal signals carry that same ID, so a host can correlate events even when the same scene is requested repeatedly. `loading_progress_changed` begins at `0.0`; values are clamped to `0.0..1.0` and never decrease during one operation. On success, progress reaches `1.0` before `level_load_completed`. Progress is an estimate of loader work: only `level_load_completed`, `level_load_failed`, or `level_load_cancelled` determines the terminal outcome, so progress reaching `1.0` alone does not mean success. Every accepted operation emits exactly one of those terminal results. A successful completion includes the exact loaded `Resource` and level definition for that operation. Rejected requests emit no load lifecycle events. `get_loaded_resource(path)` remains as a compatibility helper and consumes the ready resource; new integrations should use the resource delivered by the completion signal.
 
 ```gdscript
 extends Node
@@ -181,7 +181,7 @@ The level-completion call records best stars and score, grants the configured se
 | Signal | Meaning |
 | --- | --- |
 | `level_load_started(operation_id, level_data)` | An accepted load began. The ID is unique and increasing for the lifetime of the API node. |
-| `loading_progress_changed(operation_id, progress)` | Progress for the identified active operation. |
+| `loading_progress_changed(operation_id, progress)` | Normalized, non-decreasing progress in `0.0..1.0` for the identified active operation; progress is not a terminal result. |
 | `level_load_completed(operation_id, level_data, resource)` | Terminal success: the requested resource became ready. `resource` is the exact resource for this operation. |
 | `level_load_failed(operation_id, level_data, message)` | Terminal failure: resource loading failed; never emitted together with success for the same ID. |
 | `level_load_cancelled(operation_id, level_data)` | Terminal cancellation after `cancel_level_load(operation_id)` or when the API node exits the tree during an active load. |
