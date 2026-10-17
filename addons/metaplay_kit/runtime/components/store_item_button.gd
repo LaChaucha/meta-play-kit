@@ -75,14 +75,16 @@ func set_item(data_item: Dictionary, id_button: Variant) -> void:
 	item_data = data_item.duplicate(true)
 	item_key = id_button.duplicate() if id_button is Array else id_button
 	on_sell = not bool(item_data.get("bought", false))
-	var title: String = str(item_data.get("title", "Artículo"))
+	var title: String = str(item_data.get("title", ""))
+	if title.strip_edges().is_empty():
+		title = _ui_presentation_config.text.resolve(_ui_presentation_config.text.item_fallback_title, "Item")
 	var description: String = str(item_data.get("description", ""))
 	var price: String = str(item_data.get("price", ""))
 	var suffix: String = ""
 	if bool(item_data.get("load", false)):
-		suffix = "  ·  EQUIPADO"
+		suffix = "  ·  %s" % _ui_presentation_config.text.resolve(_ui_presentation_config.text.item_equipped_label, "Equipped")
 	elif bool(item_data.get("bought", false)):
-		suffix = "  ·  ADQUIRIDO"
+		suffix = "  ·  %s" % _ui_presentation_config.text.resolve(_ui_presentation_config.text.item_owned_label, "Owned")
 	elif not price.is_empty():
 		suffix = "  ·  %s" % price
 	text = title + suffix

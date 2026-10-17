@@ -44,12 +44,24 @@ func test_component_style_fields_are_typed_and_invalid_values_fall_back_independ
 	host_profile.body_font_size = 100
 	host_profile.campaign_columns = 2
 	host_profile.screen_horizontal_margin = 72
+	host_profile.text.campaign_locked_label = "Bloqueado"
 	api.call("configure_ui_presentation", host_profile)
 	var normalized_profile: MetaPlayUIConfig = api.call("get_ui_presentation_config") as MetaPlayUIConfig
 	assert_eq(normalized_profile.body_font_size, 18)
 	assert_eq(normalized_profile.campaign_columns, 2)
 	assert_eq(normalized_profile.screen_horizontal_margin, 72)
+	assert_eq(normalized_profile.text.campaign_locked_label, "Bloqueado")
 	assert_eq(host_profile.body_font_size, 100)
+	assert_eq(host_profile.text.campaign_locked_label, "Bloqueado")
+
+
+func test_optional_text_fields_use_english_fallbacks_and_validate_score_placeholders() -> void:
+	var text_config: MetaPlayUITextConfig = MetaPlayUITextConfig.new()
+	assert_eq(text_config.resolve(text_config.campaign_locked_label, "Locked"), "Locked")
+	assert_eq(text_config.format_result_score(125), "Score: 125")
+	text_config.result_score_format = "Puntos"
+	text_config.normalize()
+	assert_eq(text_config.format_result_score(125), "Score: 125")
 
 
 func test_first_component_query_locks_the_profile_for_v1() -> void:

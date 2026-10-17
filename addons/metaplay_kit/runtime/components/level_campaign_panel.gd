@@ -32,7 +32,7 @@ func present_campaign(entries: Array, progress_by_level: Dictionary, level_catal
 		var level: Dictionary = level_catalog.get(level_key, {}) as Dictionary
 		var progress: Dictionary = progress_by_level.get(level_key, {}) as Dictionary
 		var completed: bool = bool(progress.get("completed", false))
-		var state_label: String = "Completed" if completed else ("Available" if bool(entry.get("available", false)) else "Locked")
+		var state_label: String = _campaign_state_label(completed, bool(entry.get("available", false)))
 		var row: HBoxContainer = HBoxContainer.new()
 		row.name = "Level_%s" % str(level_key).to_pascal_case()
 		row.add_theme_constant_override("separation", _ui_presentation_config.component_spacing)
@@ -43,6 +43,16 @@ func present_campaign(entries: Array, progress_by_level: Dictionary, level_catal
 		button.name = "Select_%s" % str(level_key).to_pascal_case()
 		button.add_theme_color_override("font_color", _ui_presentation_config.primary_color)
 		row.add_child(button)
-		var score_label: Label = UI.label("★ %d   Score %d" % [int(progress.get("best_stars", 0)), int(progress.get("best_score", 0))], _ui_presentation_config.body_font_size, _ui_presentation_config.muted_text_color)
+		var score_text: String = _ui_presentation_config.text.format_campaign_score(int(progress.get("best_score", 0)))
+		score_text = score_text.replace("{stars}", str(int(progress.get("best_stars", 0))))
+		var score_label: Label = UI.label(score_text, _ui_presentation_config.body_font_size, _ui_presentation_config.muted_text_color)
 		score_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(score_label)
+
+
+func _campaign_state_label(completed: bool, available: bool) -> String:
+	if completed:
+		return _ui_presentation_config.text.resolve(_ui_presentation_config.text.campaign_completed_label, "Completed")
+	if available:
+		return _ui_presentation_config.text.resolve(_ui_presentation_config.text.campaign_available_label, "Available")
+	return _ui_presentation_config.text.resolve(_ui_presentation_config.text.campaign_locked_label, "Locked")

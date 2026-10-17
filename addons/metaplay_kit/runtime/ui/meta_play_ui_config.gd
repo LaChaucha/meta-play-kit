@@ -31,10 +31,18 @@ const CURRENT_SCHEMA_VERSION: int = 1
 @export_range(0, 64, 1) var star_spacing: int = 6
 @export_range(0, 512, 1) var loading_progress_height: int = 28
 
+## Optional host-provided text overrides. Empty fields use the kit's English defaults.
+@export var text: MetaPlayUITextConfig = MetaPlayUITextConfig.new()
+
 
 ## Replaces invalid runtime values independently, preserving all other fields.
 func normalize() -> void:
 	var defaults: MetaPlayUIConfig = MetaPlayUIConfig.new()
+	if text == null:
+		push_warning("MetaPlayUIConfig field 'text' is invalid; using its default.")
+		text = MetaPlayUITextConfig.new()
+	else:
+		text.normalize()
 	if not _valid_color(primary_color):
 		push_warning("MetaPlayUIConfig field 'primary_color' is invalid; using its default.")
 		primary_color = defaults.primary_color
