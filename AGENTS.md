@@ -60,16 +60,14 @@ No crees commits ni hagas push sin autorización explícita del usuario.
 
 ## Inicialización y primer arranque
 
-El orden en `MetaPlayDemoStage._ready()` es deliberado:
+El orden en `MetaPlayDemoStage._ready()` configura el consumidor antes de iniciar la carga:
 
-1. Configura el stage para procesar mientras el árbol está pausado.
-2. Limpia nodos de scaffolding que no forman parte de la demo.
-3. Construye la UI y obtiene referencias a pantallas, overlay, diálogo y etiquetas.
-4. Conecta señales de `TtpGuiApi`, el modelo, la carga y el adaptador IAP.
-5. Registra datos de demostración: seis niveles, saldo inicial, configuración, productos de moneda y catálogo de artículos.
-6. Muestra el overlay y llama `TtpGuiApi.request_initial_level_load()`.
+1. Configura el stage para procesar mientras el árbol está pausado, limpia scaffolding y construye la UI.
+2. Conecta señales de `TtpGuiApi`, el modelo, la carga y el adaptador IAP.
+3. Registra el catálogo estático, las reglas de resultados por nivel, la proyección de campaña definida por el anfitrión, y los datos de tienda/configuración.
+4. Muestra el overlay y llama `TtpGuiApi.request_initial_level_load("level1")` con destino explícito.
 
-El primer nivel se carga e instancia, pero el primer arranque termina en inicio; no se entra directamente a la partida. Desde inicio, “Jugar” abre el nivel siguiente disponible. Los seis niveles de demostración apuntan a `level_stub.tscn`, pero conservan claves y datos de progreso distintos.
+El primer nivel se carga e instancia, pero el primer arranque termina en inicio; no se entra directamente a la partida. La política de inicio y selección pertenece al anfitrión. Los seis niveles de demostración apuntan a `level_stub.tscn`, con claves y progreso distintos.
 
 ## Flujo de carga de niveles
 
@@ -89,20 +87,18 @@ El primer nivel se carga e instancia, pero el primer arranque termina en inicio;
 
 ## Flujo de juego, resultados y progresión
 
-El nivel de prueba no implementa gameplay real; sus botones simulan los callbacks del juego anfitrión. `MetaPlayDemoLevel` sólo admite victoria/derrota mientras `active == true`. Al completar una, detiene el nivel y llama al stage.
+El nivel de prueba no implementa gameplay real; sus botones simulan callbacks del juego anfitrión. `MetaPlayDemoLevel` sólo admite resultados mientras `active == true`.
 
-- **Victoria:** al entrar realmente en gameplay, el stage llama `begin_level_attempt(level_key)` y conserva el `attempt_id`. `complete_level(attempt_id, stars, score, next_level_key)` registra el resultado una sola vez, actualiza récords, habilita la progresión y reclama el premio base configurado si está disponible. La fachada emite `navigation_requested("win", payload)` con la cantidad realmente otorgada.
-- **Repetir:** la clave actual se carga de nuevo; al iniciar la instancia nueva se crea otro intento y el anterior activo o perdido queda abandonado. Una derrota reanimada conserva el mismo intento.
-- **Duplicar recompensa:** una espera visual simula el anuncio; se agregan monedas extra y se solicita cargar el siguiente nivel disponible.
-- **Siguiente:** carga el nivel indicado por el resultado/progresión. La validación de carga asegura que la partida sólo se muestre tras una instancia válida.
-- **Derrota:** `report_level_loss` detiene el nivel y presenta opciones de repetir, reanimar o volver a inicio. La derrota no elimina el nivel ni cambia su desbloqueo.
-- **Reanimar:** la recompensa simulada llama a `revive_level`; el nivel actual vuelve a activo y se cierra el resultado.
+- **Resultado:** el anfitrión envía `attempt_id`, puntuación, hechos booleanos para las condiciones configuradas y datos opcionales de presentación a `complete_level`. El kit exige que todas las condiciones requeridas sean verdaderas para ganar; aplica umbrales inclusivos de estrellas y permite una victoria con cero estrellas bajo el primer umbral. El modelo registra mejor puntuación/estrellas y no habilita ni elige niveles.
+- **Siguiente nivel:** el anfitrión elige el destino según sus reglas y solicita `request_next_level_load(key)` o `request_level_load(key)` explícitamente.
+- **Acciones del resultado:** `LevelResultPanel` es un componente opcional. Emite `terminal_action_requested(attempt_id, action_id)`; el anfitrión valida la oferta, aplica su efecto y deduplica reclamos. El kit no otorga premios opcionales ni aplica una política de cooldown para ellos.
+- **Historial de campaña:** `LevelCampaignPanel` es opcional y representa la proyección que configura el anfitrión. La selección emite intención; el anfitrión la autoriza y comienza la carga.
 - **Pausa:** la acción `pause` o Escape abre el diálogo y pausa el árbol. Continuar reanuda; volver a inicio despausa y muestra inicio.
 
 ## Flujos de UI y negocio
 
 - **Inicio:** iniciar partida, selector, tienda, configuración y promoción.
-- **Selector:** muestra niveles habilitados, mejor puntuación y estrellas; permite recorrer la lista habilitada y cargar la selección. El modelo rechaza niveles bloqueados.
+- **Selector:** `LevelCampaignPanel` muestra la proyección de campaña que define el anfitrión junto con el progreso. La selección emite una intención; el anfitrión valida la política y solicita la carga explícita.
 - **Tienda de artículos:** presenta artículos básicos, equipables y progresivos por fases. Las compras validan saldo; el equipamiento de un grupo (por ejemplo, sombreros) es exclusivo. `store_changed` refresca la vista.
 - **Tienda de moneda:** aceptar una oferta llama al adaptador IAP; en escritorio éste emite una compra simulada y el modelo acredita la cantidad configurada para ese producto.
 - **Configuración:** alterna SFX y música en el modelo y refleja el estado en la UI. Es persistencia sólo en memoria.
@@ -111,13 +107,15 @@ El nivel de prueba no implementa gameplay real; sus botones simulan los callback
 
 ## Contrato de señales
 
-`TtpGuiApi` es el punto de entrada para consumidores. El ciclo de carga expone `operation_id` en inicio, progreso y resultado terminal (`level_load_completed`, `level_load_failed` o `level_load_cancelled`); `loading_progress_changed` comienza en `0.0`, permanece en `0.0..1.0` y no decrece durante una operación. El progreso `1.0` precede al éxito, pero no reemplaza la señal terminal para determinar el resultado. `cancel_level_load(operation_id)` invalida la carga activa sin bloquear la carga threaded de Godot y descarta sus callbacks tardíos. Los intentos de gameplay tienen IDs separados, los resultados y claims son idempotentes, el monto de recompensas viene de configuración y el snapshot versión 2 agrupa progreso, saldo, ajustes, inventario y estado serializable de features. El anfitrión solicita exportación/restauración y conserva el IO; `session_restored` se emite una vez tras aplicar correctamente el estado completo. No se admite migración del snapshot parcial anterior mientras el producto continúa evolucionando. El stage escucha además `navigation_requested`, `level_load_exit_animation_completed`, `action_rejected`, `currency_balance_changed`, `store_catalog_changed` y señales de configuración/recompensas. El modelo y el cargador son detalles internos; los consumidores usan consultas de la fachada para obtener copias de los datos. Los nombres legacy se conservan como wrappers/señales de compatibilidad para el contrato de `interfaces/INT-85-TTP_GUI_API.md`.
+`TtpGuiApi` es el punto de entrada para consumidores. Las cargas exponen un `operation_id` monotónico en inicio, progreso y resultado terminal; las solicitudes rechazadas no emiten ciclo de vida, y cada aceptación termina exactamente una vez. El anfitrión autoriza la campaña, elige destinos y aplica/deduplica las acciones terminales recibidas por señal. `level_selection_requested` y `terminal_action_requested` son intenciones para el anfitrión, no órdenes de navegación ni premios aplicados por el kit.
 
-Usa métodos de la fachada en lugar de modificar directamente campos del modelo desde componentes nuevos. La excepción actual es la UI de demo, que lee algunos datos de catálogo/configuración para presentarlos; las mutaciones pasan por métodos del modelo/fachada.
+Los intentos de gameplay usan IDs distintos a las cargas. Los resultados repetidos con contenido idéntico son idempotentes y los conflictos se rechazan. El snapshot versión 3 incluye progreso, saldo, ajustes, inventario, recompensas base y estado serializable de features; excluye catálogo, reglas, presentación y proyección de campaña. El anfitrión configura estos datos antes de restaurar; no se promete migración desde versiones previas. El anfitrión conserva el IO de guardado.
+
+Usa métodos de la fachada en lugar de modificar directamente campos del modelo. La demo puede consultar proyecciones y datos para presentarlos; las mutaciones pasan por métodos de la fachada/modelo.
 
 ## Datos de demostración y claves
 
-Las claves configuradas por `MetaPlayDemoStage._configure_demo_data()` son `level1` a `level6`. Cada definición de nivel usa `name`, `max_score`, `max_stars`, `scene_path` y `enabled`. El primer nivel inicia habilitado; completar un nivel actualiza sus récords y habilita la progresión siguiente.
+Las claves configuradas por `MetaPlayDemoStage._configure_demo_data()` son `level1` a `level6`. El catálogo contiene datos estáticos como `name` y `scene_path`; las reglas separadas contienen puntuación máxima, tres umbrales y condiciones requeridas. La proyección ordenada de campaña (`available` y `selectable`) la decide el anfitrión. El progreso contiene finalización, mejor puntuación y estrellas, sin autoridad para desbloquear niveles.
 
 El catálogo de artículos usa claves superiores de producto y, en productos por fases, rutas tipo `["power_boost", "phase1"]`. Conserva esa forma al consultar, comprar o equipar artículos anidados. Los productos monetarios se relacionan con sus cantidades mediante `configure_currency_rewards()`.
 
@@ -131,8 +129,8 @@ Los escenarios son JSON de automatización reproducible:
 | --- | --- |
 | `boot_check.json` | Arranque, interfaz inicial y captura. |
 | `home_wide_check.json` | Inicio en viewport amplio. |
-| `game_win_flow.json` | Victoria, recompensa duplicada, nivel 2, reintento, derrota, reanimación y avance al nivel 3. |
-| `levels_flow.json` | Selector y carga de nivel. |
+| `game_win_flow.json` | Victoria, recompensa opcional del anfitrión, selección explícita del siguiente nivel, reintento, derrota y reanimación. |
+| `levels_flow.json` | Proyección de campaña, intención de selección y carga explícita. |
 | `store_purchase_flow.json` | Compra/equipamiento de artículos. |
 | `currency_purchase_flow.json` | Compra simulada de monedas. |
 | `config_flow.json` | Alternancia de sonido y música. |

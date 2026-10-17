@@ -9,8 +9,12 @@ var model: MetaPlayModel
 func before_each() -> void:
 	model = ModelScript.new()
 	model.set_levels({
-		"level1": {"enabled": true, "max_stars": 0, "max_score": 0},
-		"level2": {"enabled": false, "max_stars": 0, "max_score": 0},
+		"level1": {"name": "Level 1"},
+		"level2": {"name": "Level 2"},
+	})
+	model.configure_level_result_rules({
+		"level1": {"max_score": 1500, "star_thresholds": [500, 900, 1200], "required_conditions": ["goal_reached"]},
+		"level2": {"max_score": 1500, "star_thresholds": [500, 900, 1200], "required_conditions": ["goal_reached"]},
 	})
 	model.set_game_items({
 		"sun_hat": {
@@ -70,24 +74,25 @@ func test_attempt_result_is_idempotent_and_rewards_follow_configured_cooldown() 
 	model.configure_completion_rewards({"level1": 120}, 3600)
 	var started: Dictionary = model.begin_attempt("level1")
 	var attempt_id: String = str(started.get("attempt_id", ""))
-	var result: Dictionary = model.record_attempt_result(attempt_id, 2, 1250, "level2")
-	var duplicate_result: Dictionary = model.record_attempt_result(attempt_id, 2, 1250, "level2")
+	var result: Dictionary = model.record_attempt_result(attempt_id, 950, {"goal_reached": true}, {})
+	var duplicate_result: Dictionary = model.record_attempt_result(attempt_id, 950, {"goal_reached": true}, {})
 	var reward: Dictionary = model.claim_base_reward(attempt_id, 1000)
 	var duplicate_reward: Dictionary = model.claim_base_reward(attempt_id, 1001)
 
 	assert_true(bool(result.get("ok", false)))
 	assert_true(bool(duplicate_result.get("duplicate", false)))
-	assert_eq(model.get_level("level1").get("max_stars"), 2)
-	assert_eq(model.get_level("level1").get("max_score"), 1250)
-	assert_true(bool(model.get_level("level2").get("enabled", false)))
+	assert_eq(model.get_level_progress("level1").get("best_stars"), 2)
+	assert_eq(model.get_level_progress("level1").get("best_score"), 950)
+	assert_true(bool(model.get_level_progress("level1").get("completed", false)))
+	assert_true(model.campaign_projection.is_empty(), "Completion does not create or change host campaign availability.")
 	assert_true(bool(reward.get("granted", false)))
 	assert_true(bool(duplicate_reward.get("duplicate", false)))
 	assert_eq(model.coins, 920)
-	assert_eq(model.get_next_level_to_play(), "level2")
+	assert_eq(model.get_next_level_to_play(), null, "The model never chooses the next level.")
 
 	var replay: Dictionary = model.begin_attempt("level1")
 	var replay_id: String = str(replay.get("attempt_id", ""))
-	model.record_attempt_result(replay_id, 3, 1400, "level2")
+	model.record_attempt_result(replay_id, 1400, {"goal_reached": true}, {})
 	var cooldown: Dictionary = model.claim_base_reward(replay_id, 2000)
 	assert_false(bool(cooldown.get("ok", true)))
 	assert_eq(cooldown.get("code"), &"reward.cooldown_active")
@@ -96,20 +101,12 @@ func test_attempt_result_is_idempotent_and_rewards_follow_configured_cooldown() 
 	assert_eq(model.coins, 1040)
 
 
-func test_optional_reward_uses_host_claim_id_and_never_trusts_caller_amount() -> void:
-	model.configure_optional_rewards({"double_completion": 120})
+func test_optional_reward_claims_are_owned_by_the_host_not_the_model() -> void:
 	var started: Dictionary = model.begin_attempt("level1")
 	var attempt_id: String = str(started.get("attempt_id", ""))
-	model.record_attempt_result(attempt_id, 1, 10, null)
-	var claim: Dictionary = model.claim_optional_reward(attempt_id, "provider-claim-1", &"double_completion")
-	var duplicate: Dictionary = model.claim_optional_reward(attempt_id, "provider-claim-1", &"double_completion")
-	var collision: Dictionary = model.claim_optional_reward(attempt_id, "provider-claim-1", &"other")
-
-	assert_eq(claim.get("amount"), 120)
-	assert_true(bool(duplicate.get("duplicate", false)))
-	assert_false(bool(collision.get("ok", true)))
-	assert_eq(collision.get("code"), &"reward.claim_id_conflict")
-	assert_eq(model.coins, 920)
+	model.record_attempt_result(attempt_id, 650, {"goal_reached": true}, {"actions": [{"id": "double_completion"}]})
+	assert_false(model.reward_claims.has("optional:provider-claim-1"))
+	assert_eq(model.coins, 800)
 
 
 func test_currency_product_and_number_formatting() -> void:

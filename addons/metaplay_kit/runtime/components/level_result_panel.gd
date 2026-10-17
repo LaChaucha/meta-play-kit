@@ -1,0 +1,48 @@
+class_name LevelResultPanel
+extends PanelContainer
+
+signal action_requested(attempt_id: String, action_id: StringName)
+
+const UI: GDScript = preload("res://addons/metaplay_kit/runtime/ui/ui_factory.gd")
+const StarRatingScript: GDScript = preload("res://addons/metaplay_kit/runtime/components/star_rating.gd")
+
+var _attempt_id: String = ""
+
+
+func present_result(result: Dictionary) -> void:
+	_attempt_id = str(result.get("attempt_id", ""))
+	for child: Node in get_children():
+		remove_child(child)
+		child.queue_free()
+	var content: VBoxContainer = VBoxContainer.new()
+	content.name = "ResultContent"
+	content.add_theme_constant_override("separation", 14)
+	add_child(content)
+	var won: bool = bool(result.get("won", false))
+	var title: Label = UI.label(str(result.get("title", "Level Complete" if won else "Level Failed")), 34, Color("ffd23f"), HORIZONTAL_ALIGNMENT_CENTER)
+	title.name = "ResultTitle"
+	content.add_child(title)
+	var stars: StarRating = StarRatingScript.new() as StarRating
+	stars.name = "ResultStars"
+	stars.alignment = BoxContainer.ALIGNMENT_CENTER
+	content.add_child(stars)
+	stars.update_modal(int(result.get("stars", 0)))
+	content.add_child(UI.label("Score: %s" % str(result.get("score", 0)), 22, Color("36131d"), HORIZONTAL_ALIGNMENT_CENTER))
+	var next_level: Variant = result.get("next_level")
+	if next_level is Dictionary and not (next_level as Dictionary).is_empty():
+		var next_data: Dictionary = next_level as Dictionary
+		_add_action_button(content, str(next_data.get("label", "Continue")), StringName(str(next_data.get("action_id", "next_level"))))
+	var raw_actions: Variant = result.get("actions", [])
+	if raw_actions is Array:
+		for raw_action: Variant in raw_actions as Array:
+			if raw_action is Dictionary:
+				var action: Dictionary = raw_action as Dictionary
+				_add_action_button(content, str(action.get("label", action.get("id", "Action"))), StringName(str(action.get("id", ""))))
+
+
+func _add_action_button(content: VBoxContainer, label: String, action_id: StringName) -> void:
+	if str(action_id).is_empty():
+		return
+	var button: Button = UI.button(label, func() -> void: action_requested.emit(_attempt_id, action_id))
+	button.name = "Action_%s" % str(action_id).to_pascal_case()
+	content.add_child(button)

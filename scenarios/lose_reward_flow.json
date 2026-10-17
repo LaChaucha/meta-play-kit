@@ -13,8 +13,8 @@
     {"type": "mouse_button", "button_index": 1, "position": {"x": 738, "y": 433}, "pressed": false},
     {"type": "wait_until", "node_path": "ModalOverlay/DialogCenter/Dialog/DialogBody/DialogTitle", "property": "text", "expected": "INTÉNTALO DE NUEVO"},
     {"type": "ui_report", "label": "lose-dialog", "node_path": "ModalOverlay/DialogCenter/Dialog", "fail_on": ["any"]},
-    {"type": "mouse_button", "button_index": 1, "position": {"x": 741, "y": 402}, "pressed": true},
-    {"type": "mouse_button", "button_index": 1, "position": {"x": 741, "y": 402}, "pressed": false},
+    {"type": "mouse_button", "button_index": 1, "position": {"x": 640, "y": 487}, "pressed": true},
+    {"type": "mouse_button", "button_index": 1, "position": {"x": 640, "y": 487}, "pressed": false},
     {"type": "wait_until", "node_path": "ModalOverlay", "property": "visible", "expected": false, "timeout_seconds": 3.0},
     {"type": "assert", "assertion": "property", "node_path": "CurrentLevel", "property": "active", "expected": true}
   ]
