@@ -21,10 +21,10 @@ func present_result(result: Dictionary) -> void:
 		child.queue_free()
 	var content: VBoxContainer = VBoxContainer.new()
 	content.name = "ResultContent"
-	content.add_theme_constant_override("separation", 14)
+	content.add_theme_constant_override("separation", _ui_presentation_config.section_spacing)
 	add_child(content)
 	var won: bool = bool(result.get("won", false))
-	var title: Label = UI.label(str(result.get("title", "Level Complete" if won else "Level Failed")), 34, Color("ffd23f"), HORIZONTAL_ALIGNMENT_CENTER)
+	var title: Label = UI.label(str(result.get("title", "Level Complete" if won else "Level Failed")), _ui_presentation_config.title_font_size, _ui_presentation_config.accent_color, HORIZONTAL_ALIGNMENT_CENTER)
 	title.name = "ResultTitle"
 	content.add_child(title)
 	var stars: StarRating = StarRatingScript.new() as StarRating
@@ -32,7 +32,7 @@ func present_result(result: Dictionary) -> void:
 	stars.alignment = BoxContainer.ALIGNMENT_CENTER
 	content.add_child(stars)
 	stars.update_modal(int(result.get("stars", 0)))
-	content.add_child(UI.label("Score: %s" % str(result.get("score", 0)), 22, Color("36131d"), HORIZONTAL_ALIGNMENT_CENTER))
+	content.add_child(UI.label("Score: %s" % str(result.get("score", 0)), _ui_presentation_config.score_font_size, _ui_presentation_config.text_color, HORIZONTAL_ALIGNMENT_CENTER))
 	var next_level: Variant = result.get("next_level")
 	if next_level is Dictionary and not (next_level as Dictionary).is_empty():
 		var next_data: Dictionary = next_level as Dictionary

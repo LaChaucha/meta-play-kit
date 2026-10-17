@@ -21,7 +21,7 @@ func _ready() -> void:
 	_list = VBoxContainer.new()
 	_list.name = "Items"
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_list.add_theme_constant_override("separation", 10)
+	_list.add_theme_constant_override("separation", _ui_presentation_config.component_spacing)
 	add_child(_list)
 
 

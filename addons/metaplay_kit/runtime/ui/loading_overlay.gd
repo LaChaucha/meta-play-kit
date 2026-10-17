@@ -51,13 +51,13 @@ func _build() -> void:
 	bottom.name = "ProgressMargin"
 	bottom.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	bottom.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
-	bottom.add_theme_constant_override("margin_left", 160)
-	bottom.add_theme_constant_override("margin_right", 160)
-	bottom.add_theme_constant_override("margin_bottom", 84)
+	bottom.add_theme_constant_override("margin_left", _ui_presentation_config.screen_horizontal_margin)
+	bottom.add_theme_constant_override("margin_right", _ui_presentation_config.screen_horizontal_margin)
+	bottom.add_theme_constant_override("margin_bottom", _ui_presentation_config.screen_vertical_margin)
 	add_child(bottom)
 
 	progress_bar = ProgressBar.new()
 	progress_bar.name = "ProgressBar"
-	progress_bar.custom_minimum_size = Vector2(0.0, 28.0)
+	progress_bar.custom_minimum_size = Vector2(0.0, _ui_presentation_config.loading_progress_height)
 	progress_bar.show_percentage = false
 	bottom.add_child(progress_bar)
