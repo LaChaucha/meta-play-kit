@@ -18,11 +18,14 @@ The repository currently contains an early product baseline and a sample consume
 ### The host game owns
 
 - Gameplay, level scenes, input, and the lifecycle of gameplay nodes.
+- Player life balances and their gameplay/economy rules, including when lives are spent, granted, refilled, or eligible for use.
 - Screen composition, navigation, branding, localization, and accessibility decisions.
 - Player identity, persistence provider, backend connectivity, and authoritative online validation.
 - Platform store configuration and the decision to enable real purchases.
 
 The kit may offer optional presentation components and declarative UI profiles, but it must not require a host to adopt a fixed screen tree or navigation flow.
+
+For host-owned systems such as lives, the kit may provide reusable UI action intents and generic gameplay-attempt lifecycle operations. It does not own the host's balance, eligibility policy, ad or purchase flow, or persistence for those systems.
 
 ## Product principles
 
@@ -51,7 +54,7 @@ Before describing a release as production-ready, define and meet these gates for
 - **State ownership:** provide a versioned, validated save/restore contract without imposing a storage provider. Tracked by [issue #3](https://github.com/LaChaucha/meta-play-kit/issues/3).
 - **Host integration:** support host-owned navigation, explicit progression policies, and optional UI configuration. Tracked by [issue #4](https://github.com/LaChaucha/meta-play-kit/issues/4), [issue #5](https://github.com/LaChaucha/meta-play-kit/issues/5), and [issue #11](https://github.com/LaChaucha/meta-play-kit/issues/11).
 - **Platform commerce:** do not grant real-money entitlements until provider verification and transaction idempotency are defined. Tracked by [issue #7](https://github.com/LaChaucha/meta-play-kit/issues/7).
-- **Optional engagement:** lives, daily rewards, and quests remain opt-in and must use the same persistence and idempotent reward contracts. Tracked by [issues #8](https://github.com/LaChaucha/meta-play-kit/issues/8), [#9](https://github.com/LaChaucha/meta-play-kit/issues/9), and [#10](https://github.com/LaChaucha/meta-play-kit/issues/10).
+- **Optional engagement:** lives are host-owned; MetaPlayKit may report configured action intents and resume a host-authorized gameplay attempt, but it does not manage or persist life balances. Daily rewards and quests remain opt-in and must follow the agreed reward and persistence contracts. Tracked by [issues #8](https://github.com/LaChaucha/meta-play-kit/issues/8), [#9](https://github.com/LaChaucha/meta-play-kit/issues/9), and [#10](https://github.com/LaChaucha/meta-play-kit/issues/10).
 - **Evidence:** maintain automated tests for domain rules and API contracts, plus clean-project integration checks for the supported installation path.
 
 These gates are a release checklist to refine, not a promise that every optional feature must ship in the first product release.

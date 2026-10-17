@@ -95,16 +95,16 @@ func test_terminal_actions_only_emit_host_requests_and_do_not_apply_rewards() ->
 	api.call("set_currency_balance", 100)
 	var started: MetaPlayResult = api.call("begin_level_attempt", "first") as MetaPlayResult
 	var attempt_id: String = str(started.context.get("attempt_id", ""))
-	api.call("complete_level", attempt_id, 950, {"goal_reached": true}, {"actions": [{"id": "double", "label": "Double"}]})
+	api.call("complete_level", attempt_id, 250, {"goal_reached": false}, {"actions": [{"id": "use_life", "label": "Use a life"}]})
 	watch_signals(api)
-	var requested: MetaPlayResult = api.call("request_terminal_action", attempt_id, &"double") as MetaPlayResult
+	var requested: MetaPlayResult = api.call("request_terminal_action", attempt_id, &"use_life") as MetaPlayResult
 	var rejected: MetaPlayResult = api.call("request_terminal_action", attempt_id, &"revive") as MetaPlayResult
 	assert_eq(requested.status, MetaPlayResult.Status.COMPLETED)
 	assert_eq(rejected.status, MetaPlayResult.Status.REJECTED)
 	assert_eq(rejected.code, &"result.action_not_offered")
 	assert_eq(api.call("get_currency_balance"), 100)
 	assert_signal_emit_count(api, "terminal_action_requested", 1)
-	assert_eq(get_signal_args(api, "terminal_action_requested", 0), [attempt_id, &"double"])
+	assert_eq(get_signal_args(api, "terminal_action_requested", 0), [attempt_id, &"use_life"])
 
 
 func test_public_api_does_not_expose_screen_navigation_commands_or_signals() -> void:
@@ -118,16 +118,34 @@ func test_public_api_does_not_expose_screen_navigation_commands_or_signals() -> 
 	assert_false(api.has_method("is_optional_section_available"))
 
 
-func test_revive_reports_domain_result_without_emitting_a_screen_destination() -> void:
+func test_host_can_resume_a_failed_attempt_without_a_life_or_reward_operation() -> void:
 	watch_signals(api)
 	var started: MetaPlayResult = api.call("begin_level_attempt", "first") as MetaPlayResult
 	var attempt_id: String = str(started.context.get("attempt_id", ""))
+	var active_attempt_resume: MetaPlayResult = api.call("resume_level_attempt", attempt_id) as MetaPlayResult
+	assert_eq(active_attempt_resume.status, MetaPlayResult.Status.REJECTED)
+	assert_eq(active_attempt_resume.code, &"attempt.stale")
 	api.call("complete_level", attempt_id, 250, {"goal_reached": false})
-	var result: MetaPlayResult = api.call("revive_after_reward", attempt_id) as MetaPlayResult
+	var model: MetaPlayModel = api.get("_model") as MetaPlayModel
+	var prior_attempt: Dictionary = (model.attempts[attempt_id] as Dictionary).duplicate(true)
+	var result: MetaPlayResult = api.call("resume_level_attempt", attempt_id) as MetaPlayResult
 	assert_eq(result.status, MetaPlayResult.Status.COMPLETED)
-	assert_true(bool(result.context.get("revived", false)))
-	assert_signal_emit_count(api, "revive_reward_claimed", 1)
+	assert_true(bool(result.context.get("resumed", false)))
+	var resumed_attempt: Dictionary = model.attempts[attempt_id] as Dictionary
+	assert_eq(resumed_attempt.get("status"), "active")
+	assert_eq(resumed_attempt.get("result"), prior_attempt.get("result"), "Resume changes only attempt status.")
+	assert_eq(resumed_attempt.get("completion"), prior_attempt.get("completion"), "Resume preserves the reported result payload.")
+	var duplicate_resume: MetaPlayResult = api.call("resume_level_attempt", attempt_id) as MetaPlayResult
+	assert_eq(duplicate_resume.code, &"attempt.stale", "A resume request only transitions a failed attempt once.")
 	assert_signal_emit_count(api, "level_attempt_completed", 1)
+	assert_false(api.has_method("revive_after_reward"))
+	assert_false(api.has_method("use_life"))
+	assert_false(api.has_signal("life_use_requested"))
+	assert_false(api.has_signal("revive_reward_claimed"))
+	assert_false(api.has_signal("modal_lose_use_life_pressed"))
+	var completed_again: MetaPlayResult = api.call("complete_level", attempt_id, 950, {"goal_reached": true}) as MetaPlayResult
+	assert_eq(completed_again.status, MetaPlayResult.Status.COMPLETED)
+	assert_eq(completed_again.context.get("outcome"), "won")
 
 
 func test_campaign_selection_emits_host_intent_without_loading_and_generic_load_ignores_availability() -> void:
@@ -159,7 +177,7 @@ func test_campaign_projection_validation_is_atomic_and_order_is_host_defined() -
 	])
 
 
-func test_session_snapshot_v4_persists_progress_and_not_campaign_policy() -> void:
+func test_session_snapshot_v4_contains_kit_state_but_not_host_owned_lives() -> void:
 	var started: MetaPlayResult = api.call("begin_level_attempt", "first") as MetaPlayResult
 	var attempt_id: String = str(started.context.get("attempt_id", ""))
 	api.call("complete_level", attempt_id, 950, {"goal_reached": true})
@@ -167,9 +185,16 @@ func test_session_snapshot_v4_persists_progress_and_not_campaign_policy() -> voi
 	var exported: MetaPlayResult = api.call("export_session_state") as MetaPlayResult
 	var snapshot: Dictionary = exported.context.get("snapshot", {}) as Dictionary
 	var progression: Dictionary = snapshot.get("progression", {}) as Dictionary
+	var features: Dictionary = snapshot.get("features", {}) as Dictionary
 	assert_eq(snapshot.get("schema_version"), 4)
 	assert_eq(progression.get("level_progress"), {"first": {"completed": true, "best_score": 950, "best_stars": 3}, "second": {"completed": false, "best_score": 0, "best_stars": 0}})
 	assert_false(progression.has("levels"), "The kit snapshot does not persist host catalog or availability policy.")
+	assert_eq(features.keys().size(), 2, "Only kit-owned completion and purchase records are included.")
+	assert_false(features.has("lives"), "Host-owned life balances are not part of the kit snapshot.")
+	assert_false(api.has_method("set_session_feature_state"))
+	assert_false(api.has_method("get_session_feature_state"))
+	features["lives"] = {"balance": 3}
+	snapshot["features"] = features
 	api.call("configure_campaign_projection", [{"key": "first", "available": false, "selectable": false}, {"key": "second", "available": true, "selectable": true}])
 	api.call("configure_settings", {"sfx": true})
 	var restored: MetaPlayResult = api.call("restore_session_state", snapshot) as MetaPlayResult
@@ -177,6 +202,9 @@ func test_session_snapshot_v4_persists_progress_and_not_campaign_policy() -> voi
 	assert_eq(api.call("get_campaign_projection"), [{"key": "first", "available": false, "selectable": false}, {"key": "second", "available": true, "selectable": true}])
 	assert_eq(api.call("get_level_progress", "first"), {"completed": true, "best_score": 950, "best_stars": 3})
 	assert_false(bool((api.call("get_settings") as Dictionary).get("sfx", true)))
+	var reexported: MetaPlayResult = api.call("export_session_state") as MetaPlayResult
+	var reexported_snapshot: Dictionary = reexported.context.get("snapshot", {}) as Dictionary
+	assert_false((reexported_snapshot.get("features", {}) as Dictionary).has("lives"), "Unrecognized host feature data is not retained by the kit.")
 
 
 func test_snapshot_rejects_missing_progress_keys_and_legacy_versions_atomically() -> void:

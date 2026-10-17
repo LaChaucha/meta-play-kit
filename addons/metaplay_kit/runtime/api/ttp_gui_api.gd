@@ -42,8 +42,6 @@ signal play_requested()
 signal level_selected(level_data: Dictionary)
 signal level_retry_requested(level_data: Dictionary)
 signal next_level_load_requested(level_data: Dictionary)
-signal life_use_requested()
-signal revive_reward_claimed(level_data: Dictionary)
 signal reward_doubling_claimed(next_level: Dictionary, currency_balance: int)
 signal sfx_setting_changed(enabled: bool)
 signal music_setting_changed(enabled: bool)
@@ -66,8 +64,6 @@ signal session_restored(schema_version: int)
 # Legacy signals retained for existing integrations. New consumers should use
 # the semantic signals above.
 signal modal_lose_retry_button_pressed(level_data: Dictionary)
-signal modal_lose_use_life_pressed()
-signal modal_lose_video_reward_showed(level_data: Dictionary)
 signal modal_win_retry_button_pressed(level_data: Dictionary)
 signal modal_win_load_next_level_pressed(level_data: Dictionary)
 signal home_tap_to_play_pressed()
@@ -117,7 +113,6 @@ var _active_load_progress_emitted: bool = false
 var _pending_cancelled_operation_id: int = 0
 var _pending_cancelled_level_data: Dictionary = {}
 var _pending_cancelled_scene_path: String = ""
-var _session_feature_state: Dictionary = {}
 var _ui_presentation_config: MetaPlayUIConfig = MetaPlayUIConfig.new()
 var _ui_presentation_config_locked: bool = false
 
@@ -554,25 +549,11 @@ func _finish_reward_claim(outcome: Dictionary, fallback_message: String) -> Meta
 	return response
 
 
-func set_session_feature_state(feature_key: StringName, feature_state: Dictionary) -> MetaPlayResult:
-	var normalized_key: String = str(feature_key).strip_edges()
-	if normalized_key.is_empty() or normalized_key == COMPLETION_FEATURE_STATE_KEY:
-		return _reject_with_result(&"session.feature_key_invalid", "The feature state key is empty or reserved.", {"feature_key": normalized_key})
-	if not _is_snapshot_serializable(feature_state):
-		return _reject_with_result(&"session.feature_state_invalid", "Feature state must contain only serializable values.", {"feature_key": normalized_key})
-	_session_feature_state[normalized_key] = feature_state.duplicate(true)
-	return MetaPlayResult.completed(0, {"feature_key": normalized_key})
-
-
-func get_session_feature_state(feature_key: StringName) -> Dictionary:
-	var state: Variant = _session_feature_state.get(str(feature_key), {})
-	return state.duplicate(true) if state is Dictionary else {}
-
-
 func export_session_state() -> MetaPlayResult:
-	var feature_state: Dictionary = _session_feature_state.duplicate(true)
-	feature_state[COMPLETION_FEATURE_STATE_KEY] = _model.export_completion_state()
-	feature_state[PURCHASE_TRANSACTIONS_FEATURE_STATE_KEY] = _model.purchase_transactions.duplicate(true)
+	var feature_state: Dictionary = {
+		COMPLETION_FEATURE_STATE_KEY: _model.export_completion_state(),
+		PURCHASE_TRANSACTIONS_FEATURE_STATE_KEY: _model.purchase_transactions.duplicate(true),
+	}
 	var snapshot: Dictionary = {
 		"schema_version": SESSION_SNAPSHOT_VERSION,
 		"progression": {"level_progress": _model.get_all_level_progress()},
@@ -624,9 +605,6 @@ func restore_session_state(snapshot: Dictionary) -> MetaPlayResult:
 		return _reject_with_result(&"session.snapshot_invalid", "The session completion state is invalid.")
 	if not _is_purchase_transaction_ledger_valid(raw_purchase_transactions as Dictionary):
 		return _reject_with_result(&"session.snapshot_invalid", "The purchase transaction ledger is invalid.")
-	var restored_features: Dictionary = features.duplicate(true)
-	restored_features.erase(COMPLETION_FEATURE_STATE_KEY)
-	restored_features.erase(PURCHASE_TRANSACTIONS_FEATURE_STATE_KEY)
 	_model.level_progress = restored_progress
 	_model.configuration = (raw_settings as Dictionary).duplicate(true)
 	_model.game_items = (raw_items as Dictionary).duplicate(true)
@@ -634,7 +612,6 @@ func restore_session_state(snapshot: Dictionary) -> MetaPlayResult:
 	_model.purchase_transactions = (raw_purchase_transactions as Dictionary).duplicate(true)
 	var completion_restored: bool = _model.restore_completion_state(raw_completion as Dictionary)
 	assert(completion_restored, "Validated completion state must restore atomically.")
-	_session_feature_state = restored_features
 	session_restored.emit(SESSION_SNAPSHOT_VERSION)
 	return MetaPlayResult.completed(0, {"schema_version": SESSION_SNAPSHOT_VERSION})
 
@@ -727,23 +704,14 @@ func request_next_level_load(next_key: Variant) -> MetaPlayResult:
 	return result
 
 
-func revive_after_reward(attempt_id: String) -> MetaPlayResult:
-	if not _model.revive_attempt(attempt_id):
-		return _reject_with_result(&"attempt.stale", "The gameplay attempt cannot be revived.", {"attempt_id": attempt_id})
-	var attempt: Dictionary = _model.attempts.get(attempt_id, {}) as Dictionary
-	var level: Dictionary = get_level(attempt.get("level_key"))
-	revive_reward_claimed.emit(level)
-	modal_lose_video_reward_showed.emit(level)
-	return MetaPlayResult.completed(0, {"attempt_id": attempt_id, "revived": true})
+func resume_level_attempt(attempt_id: String) -> MetaPlayResult:
+	if not _model.resume_attempt(attempt_id):
+		return _reject_with_result(&"attempt.stale", "The gameplay attempt cannot be resumed.", {"attempt_id": attempt_id})
+	return MetaPlayResult.completed(0, {"attempt_id": attempt_id, "resumed": true})
 
 
 func claim_reward_doubling(attempt_id: String, _claim_id: String) -> MetaPlayResult:
 	return request_terminal_action(attempt_id, &"double_completion")
-
-
-func use_life() -> void:
-	life_use_requested.emit()
-	modal_lose_use_life_pressed.emit()
 
 
 func start_or_resume_game(level_key: Variant = null) -> MetaPlayResult:
@@ -1160,14 +1128,6 @@ func modal_win_next_level(_current_level_key: Variant) -> void:
 	load_next_level()
 
 
-func notify_modal_lose_video_reward(attempt_id: String) -> void:
-	revive_after_reward(attempt_id)
-
-
-func notify_modal_lose_use_life() -> void:
-	use_life()
-
-
 func notify_modal_win_video_reward(attempt_id: String, claim_id: String) -> void:
 	claim_reward_doubling(attempt_id, claim_id)
 
@@ -1247,14 +1207,12 @@ func send_notification_ui(signal_name: String, parameter: Variant = null) -> Met
 			if not parameter is Array:
 				return _legacy_event_arguments_invalid(signal_name)
 			modal_win_video_reward_showed.emit((parameter as Array).duplicate(true))
-		"home_tap_to_play_pressed", "modal_lose_use_life_pressed", "modal_config_change_sfx_status", "modal_config_change_music_status":
+		"home_tap_to_play_pressed", "modal_config_change_sfx_status", "modal_config_change_music_status":
 			if parameter != null:
 				return _legacy_event_arguments_invalid(signal_name)
 			match signal_name:
 				"home_tap_to_play_pressed":
 					home_tap_to_play_pressed.emit()
-				"modal_lose_use_life_pressed":
-					modal_lose_use_life_pressed.emit()
 				"modal_config_change_sfx_status":
 					modal_config_change_sfx_status.emit()
 				"modal_config_change_music_status":

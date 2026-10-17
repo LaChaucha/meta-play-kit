@@ -78,14 +78,12 @@ func mark_attempt_lost(attempt_id: String) -> bool:
 	return true
 
 
-func revive_attempt(attempt_id: String) -> bool:
+func resume_attempt(attempt_id: String) -> bool:
 	if not attempts.has(attempt_id):
 		return false
 	var attempt: Dictionary = (attempts[attempt_id] as Dictionary).duplicate(true)
 	if str(attempt.get("status", "")) != "failed":
 		return false
-	attempt["result"] = {}
-	attempt.erase("completion")
 	attempt["status"] = "active"
 	attempts[attempt_id] = attempt
 	return true
