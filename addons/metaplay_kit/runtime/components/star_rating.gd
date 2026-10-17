@@ -5,6 +5,11 @@ const STAR_ON: Texture2D = preload("res://addons/metaplay_kit/assets/ui/star_on.
 const STAR_OFF: Texture2D = preload("res://addons/metaplay_kit/assets/ui/star_off.png")
 
 var _stars: Array[TextureRect] = []
+var _ui_presentation_config: MetaPlayUIConfig = MetaPlayUIConfig.new()
+
+
+func _init() -> void:
+	_ui_presentation_config = TtpGuiApi._get_ui_presentation_config_for_component()
 
 
 func _ready() -> void:

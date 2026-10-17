@@ -120,6 +120,8 @@ var _pending_cancelled_operation_id: int = 0
 var _pending_cancelled_level_data: Dictionary = {}
 var _pending_cancelled_scene_path: String = ""
 var _session_feature_state: Dictionary = {}
+var _ui_presentation_config: MetaPlayUIConfig = MetaPlayUIConfig.new()
+var _ui_presentation_config_locked: bool = false
 
 
 func _ready() -> void:
@@ -128,6 +130,43 @@ func _ready() -> void:
 	_resource_batch.load_finished.connect(_on_batch_finished)
 	_resource_batch.load_failed.connect(_on_batch_failed)
 	_resource_batch.stage_updated.connect(_on_loading_progress)
+
+
+## Stores a snapshot of the host's UI profile before it creates kit components.
+## Passing null restores the kit's internal default profile.
+func configure_ui_presentation(profile: MetaPlayUIConfig = null) -> void:
+	if _ui_presentation_config_locked:
+		push_warning(
+			"TtpGuiApi UI presentation field 'configuration_timing' cannot change after a kit UI component is initialized; the active profile is retained."
+		)
+		return
+	if profile == null:
+		_ui_presentation_config = MetaPlayUIConfig.new()
+		return
+	var normalized_profile: MetaPlayUIConfig = profile.duplicate(true) as MetaPlayUIConfig
+	if normalized_profile == null:
+		push_warning("TtpGuiApi UI presentation field 'profile' is invalid; using the internal default profile.")
+		_ui_presentation_config = MetaPlayUIConfig.new()
+		return
+	if normalized_profile.schema_version != MetaPlayUIConfig.CURRENT_SCHEMA_VERSION:
+		push_warning(
+			"TtpGuiApi UI presentation field 'schema_version' is unsupported; using the default value %d."
+			% MetaPlayUIConfig.CURRENT_SCHEMA_VERSION
+		)
+		normalized_profile.schema_version = MetaPlayUIConfig.CURRENT_SCHEMA_VERSION
+	_ui_presentation_config = normalized_profile
+
+
+## Returns an isolated snapshot so consumers cannot mutate the stored profile.
+func get_ui_presentation_config() -> MetaPlayUIConfig:
+	var profile_copy: MetaPlayUIConfig = _ui_presentation_config.duplicate(true) as MetaPlayUIConfig
+	return profile_copy if profile_copy != null else MetaPlayUIConfig.new()
+
+
+## Internal component query; locks the profile once kit UI construction begins.
+func _get_ui_presentation_config_for_component() -> MetaPlayUIConfig:
+	_ui_presentation_config_locked = true
+	return get_ui_presentation_config()
 
 
 func _enter_tree() -> void:

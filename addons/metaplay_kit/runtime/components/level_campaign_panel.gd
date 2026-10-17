@@ -5,6 +5,12 @@ signal level_selection_requested(level_key: Variant)
 
 const UI: GDScript = preload("res://addons/metaplay_kit/runtime/ui/ui_factory.gd")
 
+var _ui_presentation_config: MetaPlayUIConfig = MetaPlayUIConfig.new()
+
+
+func _init() -> void:
+	_ui_presentation_config = TtpGuiApi._get_ui_presentation_config_for_component()
+
 
 func present_campaign(entries: Array, progress_by_level: Dictionary, level_catalog: Dictionary) -> void:
 	for child: Node in get_children():

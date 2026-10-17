@@ -7,6 +7,11 @@ var enable: bool = true
 var on_sell: bool = true
 var item_key: Variant = null
 var item_data: Dictionary = {}
+var _ui_presentation_config: MetaPlayUIConfig = MetaPlayUIConfig.new()
+
+
+func _init() -> void:
+	_ui_presentation_config = TtpGuiApi._get_ui_presentation_config_for_component()
 
 
 func _ready() -> void:

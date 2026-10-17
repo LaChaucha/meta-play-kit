@@ -5,6 +5,11 @@ signal dismissed()
 
 var _disabled: bool = false
 var _fade: Tween = null
+var _ui_presentation_config: MetaPlayUIConfig = MetaPlayUIConfig.new()
+
+
+func _init() -> void:
+	_ui_presentation_config = TtpGuiApi._get_ui_presentation_config_for_component()
 
 
 func _ready() -> void:
