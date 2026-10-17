@@ -42,6 +42,8 @@ The host may optionally supply a `MetaPlayUIConfig` resource once, before creati
 
 ```gdscript
 var ui_profile: MetaPlayUIConfig = load("res://config/meta_play_ui.tres") as MetaPlayUIConfig
+ui_profile.text.campaign_locked_label = "Bloqueado" # Set resolved host-language text as needed.
+ui_profile.text.result_score_format = "Puntuación: {score}"
 TtpGuiApi.configure_ui_presentation(ui_profile)
 
 # Create kit UI components only after configuration.
@@ -50,7 +52,9 @@ var campaign_panel: LevelCampaignPanel = LevelCampaignPanel.new()
 
 Without a resource, the kit uses its internal defaults. `configure_ui_presentation(null)` restores those defaults before UI construction. Components snapshot the profile when initialized; the first component query locks configuration for the rest of the session, and later configuration attempts emit a warning and are ignored. The kit copies the supplied resource and returns isolated copies from `get_ui_presentation_config()`, so it never mutates the host's resource or exposes its stored instance. Unsupported `schema_version` values and invalid fields emit `push_warning` naming the field and fall back independently.
 
-`MetaPlayUIConfig` exposes typed style tokens for kit components: primary/accent/text colors, font sizes, component spacing, modal overlay color, campaign card/button size and column count, store item height, star size/spacing, and loading-overlay margins/progress-bar height. These are logical viewport pixels. A host can create one shared `.tres` profile and tune it before instantiating kit components. The campaign columns and loading margins control layout inside those kit components; the profile does not build or reposition host-owned screens, and it does not replace the host's global theme. Icons and image assets are configured separately by #43, while UI text is handled by #42.
+`MetaPlayUIConfig` exposes typed style tokens for kit components: primary/accent/text colors, font sizes, component spacing, modal overlay color, campaign button size and column count, store item height, star size/spacing, and loading-overlay margins/progress-bar height. These are logical viewport pixels. A host can create one shared `.tres` profile and tune it before instantiating kit components. The campaign columns and loading margins control layout inside those kit components; the profile does not build or reposition host-owned screens, and it does not replace the host's global theme. Icons and image assets are configured separately by #43.
+
+The nested `MetaPlayUITextConfig` resource optionally overrides only text generated internally by kit components. It covers campaign states and score format, result titles and score format, the default continue label, and generic/equipped/owned store item labels. Empty values use English defaults; score formats must include `{score}`, and campaign score formats must also include `{stars}`. Labels, titles, descriptions, and prices supplied by the host remain authoritative. The host selects the active language and supplies already-resolved strings before it creates kit components. MetaPlayKit does not select a locale, load the host's translation catalog, or support changing language after UI construction in this version. A host should provide a visible label for each result action; actions without labels are omitted.
 
 ### Configure a session
 
