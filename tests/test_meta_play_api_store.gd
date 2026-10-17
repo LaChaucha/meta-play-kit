@@ -90,6 +90,92 @@ func test_successful_store_and_currency_commands_return_updated_snapshots() -> v
 	assert_signal_emit_count(api, "action_rejected", 1)
 
 
+func test_currency_purchase_operations_are_correlated_and_credit_only_after_confirmation() -> void:
+	watch_signals(api)
+	var started: MetaPlayResult = _call_result("begin_currency_purchase", ["coins_small"])
+	var concurrent: MetaPlayResult = _call_result("begin_currency_purchase", ["coins_small"])
+	assert_eq(started.status, MetaPlayResult.Status.ACCEPTED)
+	assert_true(started.operation_id > 0)
+	assert_eq(started.context.get("product_key"), "coins_small")
+	assert_eq(concurrent.status, MetaPlayResult.Status.REJECTED)
+	assert_eq(concurrent.code, &"purchase.in_progress")
+	assert_eq(concurrent.operation_id, 0)
+	assert_eq(api.call("get_currency_balance"), 100)
+	assert_signal_emit_count(api, "currency_purchase_result", 0)
+
+	var confirmed: MetaPlayResult = _call_result(
+		"complete_currency_purchase", [started.operation_id, "coins_small"]
+	)
+	assert_eq(confirmed.status, MetaPlayResult.Status.COMPLETED)
+	assert_eq(confirmed.operation_id, started.operation_id)
+	assert_true(bool(confirmed.context.get("provider_confirmed", false)))
+	assert_eq(api.call("get_currency_balance"), 100, "The operation result does not credit an entitlement implicitly.")
+	assert_signal_emit_count(api, "currency_purchase_result", 1)
+	var late_duplicate: MetaPlayResult = _call_result(
+		"complete_currency_purchase", [started.operation_id, "coins_small"]
+	)
+	assert_eq(late_duplicate.status, MetaPlayResult.Status.REJECTED)
+	assert_eq(late_duplicate.code, &"purchase.operation_stale")
+	assert_signal_emit_count(api, "currency_purchase_result", 1)
+
+	var credited: MetaPlayResult = _call_result("credit_currency_product", ["coins_small"])
+	assert_eq(credited.status, MetaPlayResult.Status.COMPLETED)
+	assert_eq(api.call("get_currency_balance"), 600)
+
+
+func test_currency_purchase_failure_and_cancellation_are_distinct_terminal_results() -> void:
+	watch_signals(api)
+	var first: MetaPlayResult = _call_result("begin_currency_purchase", ["coins_small"])
+	var failed: MetaPlayResult = _call_result("fail_currency_purchase", [first.operation_id])
+	assert_eq(failed.status, MetaPlayResult.Status.FAILED)
+	assert_eq(failed.operation_id, first.operation_id)
+	assert_eq(failed.code, &"purchase.provider_failed")
+	assert_eq(api.call("get_currency_balance"), 100)
+
+	var second: MetaPlayResult = _call_result("begin_currency_purchase", ["coins_small"])
+	assert_eq(second.status, MetaPlayResult.Status.ACCEPTED)
+	assert_true(second.operation_id > first.operation_id)
+	var cancelled: MetaPlayResult = _call_result("cancel_currency_purchase", [second.operation_id])
+	assert_eq(cancelled.status, MetaPlayResult.Status.CANCELLED)
+	assert_eq(cancelled.operation_id, second.operation_id)
+	assert_eq(cancelled.code, &"")
+	assert_eq(api.call("get_currency_balance"), 100)
+	assert_signal_emit_count(api, "currency_purchase_result", 2)
+
+
+func test_currency_purchase_rejects_unknown_products_and_mismatched_confirmation() -> void:
+	watch_signals(api)
+	var unknown: MetaPlayResult = _call_result("begin_currency_purchase", ["unknown_pack"])
+	assert_eq(unknown.status, MetaPlayResult.Status.REJECTED)
+	assert_eq(unknown.code, &"currency.product_not_found")
+	assert_signal_emit_count(api, "currency_purchase_result", 0)
+
+	var started: MetaPlayResult = _call_result("begin_currency_purchase", ["coins_small"])
+	var mismatch: MetaPlayResult = _call_result(
+		"complete_currency_purchase", [started.operation_id, "another_product"]
+	)
+	assert_eq(mismatch.status, MetaPlayResult.Status.FAILED)
+	assert_eq(mismatch.operation_id, started.operation_id)
+	assert_eq(mismatch.code, &"purchase.product_mismatch")
+	assert_eq(mismatch.context.get("confirmed_product_key"), "another_product")
+	assert_eq(api.call("get_currency_balance"), 100)
+	assert_signal_emit_count(api, "currency_purchase_result", 1)
+
+
+func test_legacy_notification_helper_uses_explicit_aliases_and_rejects_unknown_events() -> void:
+	watch_signals(api)
+	var supported: MetaPlayResult = _call_result("send_notification_ui", ["new_total_coins", 250])
+	var unsupported: MetaPlayResult = _call_result("send_notification_ui", ["not_a_signal", 250])
+	var invalid_arguments: MetaPlayResult = _call_result("send_notification_ui", ["new_total_coins", "250"])
+	assert_eq(supported.status, MetaPlayResult.Status.COMPLETED)
+	assert_eq(supported.context.get("event_name"), "new_total_coins")
+	assert_eq(unsupported.status, MetaPlayResult.Status.REJECTED)
+	assert_eq(unsupported.code, &"api.event_unsupported")
+	assert_eq(invalid_arguments.code, &"api.event_arguments_invalid")
+	assert_signal_emit_count(api, "new_total_coins", 1)
+	assert_signal_emit_count(api, "currency_balance_changed", 0, "Legacy aliases do not duplicate semantic signals.")
+
+
 func _call_result(method_name: String, arguments: Array) -> MetaPlayResult:
 	var raw_result: Variant = api.callv(method_name, arguments)
 	return raw_result as MetaPlayResult

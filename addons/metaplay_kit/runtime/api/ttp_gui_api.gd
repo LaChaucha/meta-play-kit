@@ -18,6 +18,10 @@ const RESULT_CODE_STORE_ITEM_NOT_OWNED: StringName = &"store.item_not_owned"
 const RESULT_CODE_STORE_ITEM_NOT_EQUIPPABLE: StringName = &"store.item_not_equippable"
 const RESULT_CODE_WALLET_INSUFFICIENT_FUNDS: StringName = &"wallet.insufficient_funds"
 const RESULT_CODE_CURRENCY_PRODUCT_NOT_FOUND: StringName = &"currency.product_not_found"
+const RESULT_CODE_PURCHASE_IN_PROGRESS: StringName = &"purchase.in_progress"
+const RESULT_CODE_PURCHASE_OPERATION_STALE: StringName = &"purchase.operation_stale"
+const RESULT_CODE_PURCHASE_PRODUCT_MISMATCH: StringName = &"purchase.product_mismatch"
+const RESULT_CODE_PURCHASE_PROVIDER_FAILED: StringName = &"purchase.provider_failed"
 const SESSION_SNAPSHOT_VERSION: int = 3
 const COMPLETION_FEATURE_STATE_KEY: String = "level_completion"
 
@@ -43,6 +47,7 @@ signal music_setting_changed(enabled: bool)
 signal item_purchased(item_path: Array)
 signal item_equipped(item_path: Array)
 signal currency_product_credited(product_key: Variant)
+signal currency_purchase_result(result: MetaPlayResult)
 signal store_catalog_changed()
 signal level_attempt_started(attempt_id: String, level_key: Variant)
 signal level_attempt_completed(attempt_id: String, result: Dictionary)
@@ -96,6 +101,9 @@ var _load_terminal_emitting: bool = false
 var _load_start_signals_emitting: bool = false
 var _is_shutting_down: bool = false
 var _next_load_operation_id: int = 0
+var _next_purchase_operation_id: int = 0
+var _active_purchase_operation_id: int = 0
+var _active_purchase_product_key: Variant = null
 var _active_load_operation_id: int = 0
 var _active_load_progress: float = 0.0
 var _active_load_progress_emitted: bool = false
@@ -119,6 +127,11 @@ func _enter_tree() -> void:
 
 func _exit_tree() -> void:
 	_is_shutting_down = true
+	if _active_purchase_operation_id > 0:
+		_finish_currency_purchase(MetaPlayResult.cancelled(_active_purchase_operation_id, {
+			"product_key": _active_purchase_product_key,
+			"reason": "api_shutdown",
+		}))
 	if _load_request_active:
 		_finish_active_load_as_cancelled()
 	else:
@@ -747,6 +760,77 @@ func credit_currency_product(product_key: Variant) -> MetaPlayResult:
 	)
 
 
+func begin_currency_purchase(product_key: Variant) -> MetaPlayResult:
+	if _active_purchase_operation_id > 0:
+		return _reject_with_result(
+			RESULT_CODE_PURCHASE_IN_PROGRESS,
+			"A currency purchase is already in progress.",
+			{"active_operation_id": _active_purchase_operation_id}
+		)
+	if not _model.coin_values.has(product_key):
+		return _reject_with_result(
+			RESULT_CODE_CURRENCY_PRODUCT_NOT_FOUND,
+			"The currency purchase references an unknown product.",
+			{"product_key": product_key}
+		)
+	_next_purchase_operation_id += 1
+	_active_purchase_operation_id = _next_purchase_operation_id
+	_active_purchase_product_key = product_key
+	return MetaPlayResult.accepted(_active_purchase_operation_id, {"product_key": product_key})
+
+
+func complete_currency_purchase(operation_id: int, confirmed_product_key: Variant) -> MetaPlayResult:
+	if not _is_active_purchase(operation_id):
+		return _reject_stale_purchase(operation_id)
+	if confirmed_product_key != _active_purchase_product_key:
+		return _finish_currency_purchase(MetaPlayResult.failed(
+			operation_id,
+			RESULT_CODE_PURCHASE_PRODUCT_MISMATCH,
+			{"product_key": _active_purchase_product_key, "confirmed_product_key": confirmed_product_key}
+		))
+	return _finish_currency_purchase(MetaPlayResult.completed(operation_id, {
+		"product_key": _active_purchase_product_key,
+		"provider_confirmed": true,
+	}))
+
+
+func fail_currency_purchase(operation_id: int) -> MetaPlayResult:
+	if not _is_active_purchase(operation_id):
+		return _reject_stale_purchase(operation_id)
+	return _finish_currency_purchase(MetaPlayResult.failed(
+		operation_id,
+		RESULT_CODE_PURCHASE_PROVIDER_FAILED,
+		{"product_key": _active_purchase_product_key}
+	))
+
+
+func cancel_currency_purchase(operation_id: int) -> MetaPlayResult:
+	if not _is_active_purchase(operation_id):
+		return _reject_stale_purchase(operation_id)
+	return _finish_currency_purchase(MetaPlayResult.cancelled(operation_id, {
+		"product_key": _active_purchase_product_key,
+	}))
+
+
+func _is_active_purchase(operation_id: int) -> bool:
+	return operation_id > 0 and operation_id == _active_purchase_operation_id
+
+
+func _reject_stale_purchase(operation_id: int) -> MetaPlayResult:
+	return _reject_with_result(
+		RESULT_CODE_PURCHASE_OPERATION_STALE,
+		"The purchase operation is unknown, stale, or already terminal.",
+		{"operation_id": operation_id}
+	)
+
+
+func _finish_currency_purchase(result: MetaPlayResult) -> MetaPlayResult:
+	_active_purchase_operation_id = 0
+	_active_purchase_product_key = null
+	currency_purchase_result.emit(result)
+	return result
+
+
 func _request_screen(screen_name: String) -> void:
 	_emit_navigation(screen_name, {})
 
@@ -1000,16 +1084,60 @@ func add_coin_purchased(product_key: Variant) -> void:
 	credit_currency_product(product_key)
 
 
-func send_notification_ui(signal_name: String, parameter: Variant = null) -> void:
-	if not has_signal(signal_name):
-		_reject("Unknown UI signal: %s" % signal_name)
-		return
-	if parameter == null:
-		# lint:ignore godot3_api -- deprecated compatibility method accepts a dynamic signal name.
-		emit_signal(signal_name)
-	else:
-		# lint:ignore godot3_api -- deprecated compatibility method accepts a dynamic signal name.
-		emit_signal(signal_name, parameter)
+func send_notification_ui(signal_name: String, parameter: Variant = null) -> MetaPlayResult:
+	## Deprecated explicit alias map for the legacy helper; arbitrary signal names are never emitted.
+	match signal_name:
+		"new_total_coins":
+			if not parameter is int:
+				return _legacy_event_arguments_invalid(signal_name)
+			new_total_coins.emit(int(parameter))
+		"store_game_update_item_loadded":
+			if parameter == null:
+				return _legacy_event_arguments_invalid(signal_name)
+			store_game_update_item_loadded.emit(parameter)
+		"store_game_buy_item":
+			if not parameter is Array:
+				return _legacy_event_arguments_invalid(signal_name)
+			store_game_buy_item.emit((parameter as Array).duplicate(true))
+		"store_currency_buy_coins":
+			if parameter == null:
+				return _legacy_event_arguments_invalid(signal_name)
+			store_currency_buy_coins.emit(parameter)
+		"level_selector_load_new_level_selected":
+			if not parameter is Dictionary:
+				return _legacy_event_arguments_invalid(signal_name)
+			level_selector_load_new_level_selected.emit((parameter as Dictionary).duplicate(true))
+		"modal_win_video_reward_showed":
+			if not parameter is Array:
+				return _legacy_event_arguments_invalid(signal_name)
+			modal_win_video_reward_showed.emit((parameter as Array).duplicate(true))
+		"home_tap_to_play_pressed", "modal_lose_use_life_pressed", "modal_config_change_sfx_status", "modal_config_change_music_status":
+			if parameter != null:
+				return _legacy_event_arguments_invalid(signal_name)
+			match signal_name:
+				"home_tap_to_play_pressed":
+					home_tap_to_play_pressed.emit()
+				"modal_lose_use_life_pressed":
+					modal_lose_use_life_pressed.emit()
+				"modal_config_change_sfx_status":
+					modal_config_change_sfx_status.emit()
+				"modal_config_change_music_status":
+					modal_config_change_music_status.emit()
+		_:
+			return _reject_with_result(
+				&"api.event_unsupported",
+				"The requested UI event is unsupported; use a declared facade method or signal.",
+				{"event_name": signal_name}
+			)
+	return MetaPlayResult.completed(0, {"event_name": signal_name, "legacy": true})
+
+
+func _legacy_event_arguments_invalid(signal_name: String) -> MetaPlayResult:
+	return _reject_with_result(
+		&"api.event_arguments_invalid",
+		"The legacy UI event received arguments with an invalid shape.",
+		{"event_name": signal_name}
+	)
 
 
 func manage_tap_background() -> void:
