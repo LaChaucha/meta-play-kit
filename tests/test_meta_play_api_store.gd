@@ -282,6 +282,24 @@ func test_legacy_notification_helper_uses_explicit_aliases_and_rejects_unknown_e
 	assert_signal_emit_count(api, "currency_balance_changed", 0, "Legacy aliases do not duplicate semantic signals.")
 
 
+func test_host_item_icon_paths_remain_serializable_in_inventory_snapshots() -> void:
+	api.call("configure_items", {
+		"host_art_item": {
+			"type": 0,
+			"price": 10,
+			"bought": false,
+			"icon_path": "res://demo/assets/world/home_room.png",
+		},
+	})
+	var exported: MetaPlayResult = _call_result("export_session_state", [])
+	assert_eq(exported.status, MetaPlayResult.Status.COMPLETED)
+	var snapshot: Dictionary = exported.context.get("snapshot", {}) as Dictionary
+	var inventory: Dictionary = snapshot.get("inventory", {}) as Dictionary
+	var items: Dictionary = inventory.get("items", {}) as Dictionary
+	var item: Dictionary = items.get("host_art_item", {}) as Dictionary
+	assert_eq(item.get("icon_path"), "res://demo/assets/world/home_room.png")
+
+
 func _call_result(method_name: String, arguments: Array) -> MetaPlayResult:
 	var raw_result: Variant = api.callv(method_name, arguments)
 	return raw_result as MetaPlayResult

@@ -40,7 +40,9 @@ func complete_loading() -> void:
 func _build() -> void:
 	var background: TextureRect = TextureRect.new()
 	background.name = "LoadingBackground"
-	background.texture = preload("res://addons/metaplay_kit/assets/ui/loading_background.png")
+	background.texture = _ui_presentation_config.loading_background_texture
+	if background.texture == null:
+		background.texture = preload("res://addons/metaplay_kit/assets/ui/loading_background.png")
 	background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)

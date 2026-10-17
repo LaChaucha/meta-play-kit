@@ -30,4 +30,8 @@ func _ready() -> void:
 func update_modal(quantity_star: int) -> void:
 	var visible_stars: int = clampi(quantity_star, 0, 3)
 	for index: int in range(_stars.size()):
-		_stars[index].texture = STAR_ON if index < visible_stars else STAR_OFF
+		var configured_texture: Texture2D = _ui_presentation_config.active_star_texture if index < visible_stars else _ui_presentation_config.inactive_star_texture
+		if configured_texture != null and is_instance_valid(configured_texture):
+			_stars[index].texture = configured_texture
+		else:
+			_stars[index].texture = STAR_ON if index < visible_stars else STAR_OFF
