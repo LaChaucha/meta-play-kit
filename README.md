@@ -58,6 +58,8 @@ The nested `MetaPlayUITextConfig` resource optionally overrides only text genera
 
 The host owns screen composition and navigation. MetaPlayKit reports domain outcomes and reusable-component intents; it does not expose screen destinations or commands. The sample consumer routes these signals through its own stage. This keeps each game's navigation, screen availability, and presentation policy in the host.
 
+Daily login tracking, consecutive-day streaks, and calendar-based reward eligibility are outside MetaPlayKit's current scope. The host owns player identity, session detection, date/time-zone rules, reward availability and effects, and persistence for those systems. The kit does not record daily connections, calculate streaks, or include daily engagement state in its API or snapshots. Kit-managed rewards are limited to configured level-completion rewards.
+
 For supported graphic slots, `MetaPlayUIConfig` accepts typed `Texture2D` overrides from anywhere in the host project's `res://` namespace. The current slots are `active_star_texture`, `inactive_star_texture`, and `loading_background_texture`; a null value keeps the corresponding kit asset. For individual store products, provide an optional `icon_path` using a `res://` path in the item definition. The button loads it as a `Texture2D`; missing paths and other resource types warn and leave the item without an icon. These strings remain serializable in session inventory snapshots. The profile does not accept arbitrary slots or modify UI assembled by the host. For example:
 
 ```gdscript

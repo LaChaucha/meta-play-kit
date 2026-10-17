@@ -6,6 +6,8 @@ MetaPlayKit es un addon reutilizable de Godot en desarrollo como producto orient
 
 El proyecto está hecho para Godot 4.7, con GDScript tipado y renderer GL Compatibility. La escena principal del consumidor de ejemplo es `res://demo/scenes/main.tscn`. El addon distribuible vive en `addons/metaplay_kit/`; `demo/` es solo una integración de referencia. El estado y las brechas del producto se describen en `PRODUCT.md` y se refinan en los issues de GitHub. La carpeta `interfaces/` y su antiguo `testAddons` son material de referencia: no forman parte del runtime y `.gdignore` impide importar el proyecto legado.
 
+El alcance actual del producto excluye el registro de conexiones diarias, el cálculo de rachas y la elegibilidad de recompensas por calendario. Esas reglas, los datos de sesión/identidad, la interpretación de fechas y su persistencia pertenecen al anfitrión. No agregues APIs ni campos de snapshot para esas capacidades sin una decisión explícita que amplíe el alcance del producto. Las recompensas del kit se limitan a recompensas configuradas por completar niveles.
+
 ## Reglas para trabajar en este proyecto
 
 - Mantén separadas las responsabilidades: `MetaPlayModel` aplica reglas y estado; `TtpGuiApi` expone el contrato y coordina; `MetaPlayDemoStage` compone el consumidor de ejemplo; los componentes reutilizables manejan piezas acotadas de UI.
