@@ -34,6 +34,12 @@ const CURRENT_SCHEMA_VERSION: int = 1
 ## Optional host-provided text overrides. Empty fields use the kit's English defaults.
 @export var text: MetaPlayUITextConfig = MetaPlayUITextConfig.new()
 
+## Optional textures for supported kit-owned asset slots. Null keeps the kit default.
+@export_group("Assets")
+@export var active_star_texture: Texture2D
+@export var inactive_star_texture: Texture2D
+@export var loading_background_texture: Texture2D
+
 
 ## Replaces invalid runtime values independently, preserving all other fields.
 func normalize() -> void:
@@ -43,6 +49,9 @@ func normalize() -> void:
 		text = MetaPlayUITextConfig.new()
 	else:
 		text.normalize()
+	_validate_texture_field("active_star_texture", active_star_texture)
+	_validate_texture_field("inactive_star_texture", inactive_star_texture)
+	_validate_texture_field("loading_background_texture", loading_background_texture)
 	if not _valid_color(primary_color):
 		push_warning("MetaPlayUIConfig field 'primary_color' is invalid; using its default.")
 		primary_color = defaults.primary_color
@@ -112,3 +121,8 @@ func _valid_size(value: Vector2) -> bool:
 
 func _valid_color(value: Color) -> bool:
 	return is_finite(value.r) and is_finite(value.g) and is_finite(value.b) and is_finite(value.a)
+
+
+func _validate_texture_field(field_name: String, texture: Texture2D) -> void:
+	if texture != null and not is_instance_valid(texture):
+		push_warning("MetaPlayUIConfig field '%s' is invalid; using the kit default." % field_name)

@@ -43,11 +43,25 @@ func add_point_in_number(value: String) -> String:
 	return formatted
 
 
-func set_texture_item(texture_path: Variant) -> void:
-	if texture_path == null or str(texture_path).is_empty():
+func set_texture_item(texture_path: String) -> void:
+	if texture_path.strip_edges().is_empty():
 		icon = null
 		return
-	icon = load(str(texture_path)) as Texture2D
+	if not texture_path.begins_with("res://"):
+		push_warning("StoreItemButton asset field 'icon_path' must reference a res:// project resource; no icon will be shown.")
+		icon = null
+		return
+	if not ResourceLoader.exists(texture_path):
+		push_warning("StoreItemButton asset field 'icon_path' references a missing project resource '%s'; no icon will be shown." % texture_path)
+		icon = null
+		return
+	var loaded_resource: Resource = load(texture_path)
+	var texture: Texture2D = loaded_resource as Texture2D
+	if texture == null:
+		push_warning("StoreItemButton asset field 'icon_path' could not load a Texture2D from '%s'; no icon will be shown." % texture_path)
+		icon = null
+		return
+	icon = texture
 	expand_icon = true
 
 
@@ -89,6 +103,8 @@ func set_item(data_item: Dictionary, id_button: Variant) -> void:
 		suffix = "  ·  %s" % price
 	text = title + suffix
 	tooltip_text = description
+	var raw_icon_path: Variant = item_data.get("icon_path", "")
+	set_texture_item("" if raw_icon_path == null else str(raw_icon_path))
 
 
 func _on_pressed() -> void:

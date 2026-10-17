@@ -56,6 +56,18 @@ Without a resource, the kit uses its internal defaults. `configure_ui_presentati
 
 The nested `MetaPlayUITextConfig` resource optionally overrides only text generated internally by kit components. It covers campaign states and score format, result titles and score format, the default continue label, and generic/equipped/owned store item labels. Empty values use English defaults; score formats must include `{score}`, and campaign score formats must also include `{stars}`. Labels, titles, descriptions, and prices supplied by the host remain authoritative. The host selects the active language and supplies already-resolved strings before it creates kit components. MetaPlayKit does not select a locale, load the host's translation catalog, or support changing language after UI construction in this version. A host should provide a visible label for each result action; actions without labels are omitted.
 
+For supported graphic slots, `MetaPlayUIConfig` accepts typed `Texture2D` overrides from anywhere in the host project's `res://` namespace. The current slots are `active_star_texture`, `inactive_star_texture`, and `loading_background_texture`; a null value keeps the corresponding kit asset. For individual store products, provide an optional `icon_path` using a `res://` path in the item definition. The button loads it as a `Texture2D`; missing paths and other resource types warn and leave the item without an icon. These strings remain serializable in session inventory snapshots. The profile does not accept arbitrary slots or modify UI assembled by the host. For example:
+
+```gdscript
+ui_profile.active_star_texture = load("res://art/ui/star_gold.png") as Texture2D
+ui_profile.loading_background_texture = load("res://art/ui/loading_screen.png") as Texture2D
+TtpGuiApi.configure_ui_presentation(ui_profile)
+
+TtpGuiApi.configure_items({
+    "energy": {"title": "Energy", "icon_path": "res://art/items/energy.png", "price": "100"},
+})
+```
+
 ### Configure a session
 
 ```gdscript
