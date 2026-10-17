@@ -29,6 +29,7 @@ var configuration: Dictionary = {
 var currency_items: Dictionary = {}
 var game_items: Dictionary = {}
 var coin_values: Dictionary = {}
+var purchase_transactions: Dictionary = {}
 var coins: int = 0
 var attempts: Dictionary = {}
 var completion_rewards: Dictionary = {}
@@ -470,6 +471,37 @@ func add_currency_product(product_key: Variant) -> Dictionary:
 		"coins": coins,
 		"coins_added": amount,
 		"product_key": product_key,
+	}
+
+
+func record_verified_currency_purchase(product_key: Variant, transaction_id: String, provider_id: String) -> Dictionary:
+	if not coin_values.has(product_key):
+		return _store_failure(&"currency.product_not_found", "The verified purchase references an unknown product.", {"product_key": product_key})
+	if transaction_id.strip_edges().is_empty() or provider_id.strip_edges().is_empty():
+		return _store_failure(&"purchase.transaction_invalid", "A verified purchase requires a transaction ID and provider ID.", {})
+	var transaction_key: String = "%s:%s" % [provider_id, transaction_id]
+	if purchase_transactions.has(transaction_key):
+		var existing: Dictionary = purchase_transactions[transaction_key] as Dictionary
+		if str(existing.get("product_key", "")) != str(product_key) or str(existing.get("provider", "")) != provider_id:
+			return _store_failure(&"purchase.transaction_conflict", "A transaction ID cannot be reused for a different product or provider.", {"transaction_id": transaction_id})
+		return {"ok": true, "duplicate": true, "transaction_id": transaction_id, "product_key": existing.get("product_key"), "currency_added": 0, "currency_balance": coins}
+	var amount: int = maxi(0, int(coin_values[product_key]))
+	add_coins(amount)
+	var transaction: Dictionary = {
+		"transaction_id": transaction_id,
+		"product_key": str(product_key),
+		"provider": provider_id,
+		"currency_added": amount,
+	}
+	purchase_transactions[transaction_key] = transaction
+	return {
+		"ok": true,
+		"duplicate": false,
+		"transaction_id": transaction_id,
+		"product_key": product_key,
+		"provider": provider_id,
+		"currency_added": amount,
+		"currency_balance": coins,
 	}
 
 

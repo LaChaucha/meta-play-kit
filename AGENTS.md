@@ -12,9 +12,9 @@ El proyecto está hecho para Godot 4.7, con GDScript tipado y renderer GL Compat
 - Antes de editar GDScript, consulta las convenciones de Godot 4 y conserva tipos explícitos en variables, argumentos y retornos. Evita inferir tipos desde `Variant`, diccionarios, nodos o valores nulos.
 - Usa rutas `res://` para recursos del proyecto. Si mueves o renombras recursos, actualiza todas sus referencias y sidecars `.uid`/`.import` usando herramientas apropiadas de Godot.
 - Construye la interfaz dinámica con contenedores. El tema global vive en `addons/metaplay_kit/assets/theme/metaplay.tres`; evita añadir sombras o overrides tipográficos generales sin comprobar su efecto en todo el proyecto.
-- No conviertas la IAP simulada en una compra real ni abras enlaces externos automáticamente. La compra en escritorio es explícitamente una simulación; los enlaces se abren sólo por acción del usuario.
+- Mantene la IAP de escritorio explicitamente simulada. `GooglePlayPurchaseProvider` verifica recibos firmados de Google Play cuando el anfitrion configura la clave publica de Play Console; otros mercados/verificadores se conectan mediante `PurchaseProviderAdapter`. La verificacion local no sustituye la verificacion server-side necesaria para detectar revocaciones y fraude. No abras enlaces externos automaticamente; solo por accion del usuario.
 - `interfaces/testAddons` es referencia archivada. No copies su runtime de Godot 3 al proyecto actual ni elimines esa referencia sin una petición explícita.
-- La implementación actual aún no incluye backend ni guardado persistente: modelo, progreso, saldo, ajustes y compras viven en memoria durante la sesión. No asumas que esta limitación define el alcance final; las opciones de producción se registran en `PRODUCT.md` y en el backlog. Mantén la IAP de escritorio como simulación salvo que se defina y autorice una integración de proveedor verificado.
+- No hay backend ni guardado persistente automatico: modelo, progreso, saldo, ajustes y compras viven en memoria hasta que el anfitrion exporta y guarda el snapshot. El ledger local de transacciones evita repetir un abono dentro de un snapshot, pero no es autoridad frente a manipulacion del cliente. Los juegos online deben verificar y deduplicar tokens en su backend.
 
 ## Desglose de épicas en historias de usuario
 
@@ -51,6 +51,8 @@ No crees commits ni hagas push sin autorización explícita del usuario.
 | `addons/metaplay_kit/runtime/components/` | Componentes de interfaz reutilizables. |
 | `addons/metaplay_kit/runtime/ui/` | Fábrica UI y overlay de carga. |
 | `addons/metaplay_kit/runtime/platform/iap_adapter.gd` | Frontera opcional de pagos y simulación de escritorio. |
+| `addons/metaplay_kit/runtime/platform/purchase_provider_adapter.gd` | Contrato neutral de proveedores de compras. |
+| `addons/metaplay_kit/runtime/platform/google_play_purchase_provider.gd` | Adaptador opcional Google Play, verificaci?n local de firma y consulta de compras restauradas. |
 | `addons/metaplay_kit/assets/` | Tema e iconos reutilizables del kit. |
 | `PRODUCT.md` | Dirección del producto, límites de responsabilidad y criterios de preparación para producción. |
 | `demo/scenes/`, `demo/scripts/` | Aplicación de ejemplo y nivel simulado consumidor del addon. |
@@ -109,7 +111,7 @@ El nivel de prueba no implementa gameplay real; sus botones simulan callbacks de
 
 `TtpGuiApi` es el punto de entrada para consumidores. Las cargas exponen un `operation_id` monotónico en inicio, progreso y resultado terminal; las solicitudes rechazadas no emiten ciclo de vida, y cada aceptación termina exactamente una vez. El anfitrión autoriza la campaña, elige destinos y aplica/deduplica las acciones terminales recibidas por señal. `level_selection_requested` y `terminal_action_requested` son intenciones para el anfitrión, no órdenes de navegación ni premios aplicados por el kit.
 
-Los intentos de gameplay usan IDs distintos a las cargas. Los resultados repetidos con contenido idéntico son idempotentes y los conflictos se rechazan. El snapshot versión 3 incluye progreso, saldo, ajustes, inventario, recompensas base y estado serializable de features; excluye catálogo, reglas, presentación y proyección de campaña. El anfitrión configura estos datos antes de restaurar; no se promete migración desde versiones previas. El anfitrión conserva el IO de guardado.
+Los intentos de gameplay usan IDs distintos a las cargas. Los resultados identicos son idempotentes y los conflictos se rechazan. El snapshot version 4 incluye progreso, saldo, ajustes, inventario, recompensas base, ledger local de transacciones y estado serializable de features; excluye catalogo, reglas, presentacion y proyeccion de campana. El anfitrion configura estos datos antes de restaurar. Se migra solo la version 3 inmediatamente anterior; el anfitrion conserva el IO de guardado.
 
 Usa métodos de la fachada en lugar de modificar directamente campos del modelo. La demo puede consultar proyecciones y datos para presentarlos; las mutaciones pasan por métodos de la fachada/modelo.
 
