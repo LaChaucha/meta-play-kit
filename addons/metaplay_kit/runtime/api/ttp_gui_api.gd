@@ -5,6 +5,8 @@ extends Node
 
 const LEVEL_LOAD_BUSY_MESSAGE: String = "A level load is already in progress."
 const RESULT_CODE_API_UNAVAILABLE: StringName = &"api.unavailable"
+const RESULT_CODE_UI_SECTION_UNAVAILABLE: StringName = &"ui.section_unavailable"
+const RESULT_CODE_UI_SECTION_INVALID: StringName = &"ui.section_invalid"
 const RESULT_CODE_LEVEL_NOT_FOUND: StringName = &"level.not_found"
 const RESULT_CODE_LEVEL_LOCKED: StringName = &"level.locked"
 const RESULT_CODE_LEVEL_SCENE_PATH_MISSING: StringName = &"level.scene_path_missing"
@@ -90,6 +92,13 @@ enum ItemType {
 	BASIC = 0,
 	EQUIP = 1,
 	PHASE = 2,
+}
+
+## Optional destinations that MetaPlayKit can request on behalf of a host.
+enum OptionalSection {
+	LEVELS = 0,
+	STORE = 1,
+	SETTINGS = 2,
 }
 
 # Deprecated name retained for source compatibility.
@@ -752,20 +761,57 @@ func use_life() -> void:
 
 
 # Navigation and settings actions.
-func request_home_screen() -> void:
-	_request_screen("home")
+func request_home_screen() -> MetaPlayResult:
+	return _request_screen("home")
 
 
-func request_level_selection_screen() -> void:
-	_request_screen("levels")
+func request_level_selection_screen() -> MetaPlayResult:
+	return _request_screen("levels")
 
 
-func request_store_screen() -> void:
-	_request_screen("store")
+func request_store_screen() -> MetaPlayResult:
+	return _request_screen("store")
 
 
-func request_settings_screen() -> void:
-	_request_screen("settings")
+func request_settings_screen() -> MetaPlayResult:
+	return _request_screen("settings")
+
+
+## Changes whether MetaPlayKit may request an optional destination.
+## This policy remains mutable after UI components have been initialized.
+func set_optional_section_available(section: OptionalSection, available: bool) -> MetaPlayResult:
+	match section:
+		OptionalSection.LEVELS:
+			_ui_presentation_config.level_selection_available = available
+		OptionalSection.STORE:
+			_ui_presentation_config.store_available = available
+		OptionalSection.SETTINGS:
+			_ui_presentation_config.settings_available = available
+		_:
+			return _reject_with_result(
+				RESULT_CODE_UI_SECTION_INVALID,
+				"The requested optional UI section is not supported.",
+				{"section": int(section)}
+			)
+	return MetaPlayResult.completed(0, {
+		"section": _optional_section_name(section),
+		"available": available,
+	})
+
+
+func is_optional_section_available(section: OptionalSection) -> bool:
+	return _is_optional_section_available(int(section))
+
+
+func _is_optional_section_available(section: int) -> bool:
+	match section:
+		OptionalSection.LEVELS:
+			return _ui_presentation_config.level_selection_available
+		OptionalSection.STORE:
+			return _ui_presentation_config.store_available
+		OptionalSection.SETTINGS:
+			return _ui_presentation_config.settings_available
+	return false
 
 
 func start_or_resume_game(level_key: Variant = null) -> MetaPlayResult:
@@ -1020,8 +1066,39 @@ func _finish_currency_purchase(result: MetaPlayResult) -> MetaPlayResult:
 	return result
 
 
-func _request_screen(screen_name: String) -> void:
+func _request_screen(screen_name: String) -> MetaPlayResult:
+	var optional_section: int = _optional_section_for_screen(screen_name)
+	if optional_section >= 0 and not _is_optional_section_available(optional_section):
+		var section_name: StringName = _optional_section_name(optional_section)
+		return _reject_with_result(
+			RESULT_CODE_UI_SECTION_UNAVAILABLE,
+			"The host disabled the '%s' UI section." % section_name,
+			{"section": section_name}
+		)
 	_emit_navigation(screen_name, {})
+	return MetaPlayResult.completed(0, {"screen_name": screen_name})
+
+
+func _optional_section_for_screen(screen_name: String) -> int:
+	match screen_name:
+		"levels":
+			return OptionalSection.LEVELS
+		"store":
+			return OptionalSection.STORE
+		"settings", "config":
+			return OptionalSection.SETTINGS
+	return -1
+
+
+func _optional_section_name(section: int) -> StringName:
+	match section:
+		OptionalSection.LEVELS:
+			return &"levels"
+		OptionalSection.STORE:
+			return &"store"
+		OptionalSection.SETTINGS:
+			return &"settings"
+	return &"unknown"
 
 
 func _emit_navigation(screen_name: String, payload: Dictionary) -> void:
@@ -1205,16 +1282,16 @@ func notify_modal_win_video_reward(attempt_id: String, claim_id: String) -> void
 	claim_reward_doubling(attempt_id, claim_id)
 
 
-func select_pause() -> void:
-	request_home_screen()
+func select_pause() -> MetaPlayResult:
+	return request_home_screen()
 
 
 func get_resource_loaded(path: String) -> Resource:
 	return get_loaded_resource(path)
 
 
-func show_home() -> void:
-	request_home_screen()
+func show_home() -> MetaPlayResult:
+	return request_home_screen()
 
 
 func notify_change_sfx_status() -> void:
@@ -1237,16 +1314,16 @@ func change_level(level_key: Variant) -> void:
 	select_level(level_key)
 
 
-func show_level_selector_pressed(status: bool) -> void:
-	_request_screen("levels" if status else "home")
+func show_level_selector_pressed(status: bool) -> MetaPlayResult:
+	return _request_screen("levels" if status else "home")
 
 
-func show_panel_store(status: bool) -> void:
-	_request_screen("store" if status else "home")
+func show_panel_store(status: bool) -> MetaPlayResult:
+	return _request_screen("store" if status else "home")
 
 
-func show_panel_config(status: bool) -> void:
-	_request_screen("config" if status else "home")
+func show_panel_config(status: bool) -> MetaPlayResult:
+	return _request_screen("config" if status else "home")
 
 
 func get_item_in_store_game_dictionary(item_path: Array) -> Dictionary:
