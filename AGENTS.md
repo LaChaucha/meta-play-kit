@@ -72,7 +72,7 @@ El orden en `MetaPlayDemoStage._ready()` configura el consumidor antes de inicia
 
 Un anfitrión que suministre `MetaPlayUIConfig` debe llamar `TtpGuiApi.configure_ui_presentation(profile)` antes de crear componentes reutilizables del kit. El primer componente bloquea la configuración para la sesión; las llamadas posteriores emiten advertencia y se ignoran. Los componentes capturan una copia al inicializarse. El kit conserva un perfil interno predeterminado y nunca modifica el recurso entregado por el anfitrión. Los valores incompatibles deben advertir por campo y usar el default correspondiente. El perfil tipado configura estilos, dimensiones/distribución, textos internos opcionales y los slots gráficos publicados por el kit. El idioma y los recursos los elige el anfitrión; los textos se pasan resueltos en `MetaPlayUITextConfig` y las texturas globales son campos `Texture2D` que aceptan recursos del proyecto anfitrión. Para iconos por artículo se usa `icon_path` con ruta `res://` validada al crear el botón. Los slots vacíos usan defaults del kit. No hay selector de idioma ni cambio en caliente en esta versión. El perfil no define la estructura de pantallas del anfitrión ni cambia su tema global.
 
-La disponibilidad opcional de `levels`, `store` y `settings` vive en ese perfil central, pero puede cambiar en ejecución mediante `set_optional_section_available()`, incluso después de inicializar componentes. Solo filtra solicitudes de navegación emitidas por MetaPlayKit; no bloquea pantallas/rutas del anfitrión ni acciones de dominio. Los tres destinos están habilitados por defecto. Deshabilitar uno rechaza nuevas solicitudes con `MetaPlayResult` (`ui.section_unavailable`) y emite `action_rejected`; las solicitudes ya emitidas no se revocan. El alias legacy `config` usa la política `settings`.
+La navegación y disponibilidad de pantallas pertenecen al anfitrión. `TtpGuiApi` expone resultados de dominio e intenciones de componentes reutilizables, pero no nombres de pantallas ni comandos para abrirlas. La demo implementa sus transiciones en `MetaPlayDemoStage`.
 
 El primer nivel se carga e instancia, pero el primer arranque termina en inicio; no se entra directamente a la partida. La política de inicio y selección pertenece al anfitrión. Los seis niveles de demostración apuntan a `level_stub.tscn`, con claves y progreso distintos.
 
@@ -90,7 +90,7 @@ El primer nivel se carga e instancia, pero el primer arranque termina en inicio;
 8. Si la instancia falla, el stage muestra un aviso y vuelve a inicio sin presentar una partida falsa ni cambiar la clave activa.
 9. El overlay completa su animación y el stage muestra inicio en el primer arranque o la pantalla de juego en cargas posteriores.
 
-`ResourceBatch.get_resource(path)` consume la entrada lista de esa ruta: una segunda lectura inmediata devuelve `null`. Cada nueva carga debe volver a registrar la ruta con `add_resource_to_batch()` y llamar `start_loading()`. Ante error, `load_failed` llega a la fachada, que emite `action_rejected` y solicita volver a inicio.
+`ResourceBatch.get_resource(path)` consume la entrada lista de esa ruta: una segunda lectura inmediata devuelve `null`. Cada nueva carga debe volver a registrar la ruta con `add_resource_to_batch()` y llamar `start_loading()`. Ante error, `load_failed` llega a la fachada, que emite `action_rejected`; el anfitrión decide cómo recuperarse y qué pantalla presentar.
 
 ## Flujo de juego, resultados y progresión
 
@@ -114,11 +114,9 @@ El nivel de prueba no implementa gameplay real; sus botones simulan callbacks de
 
 ## Contrato de señales
 
-`TtpGuiApi` es el punto de entrada para consumidores. Las cargas exponen un `operation_id` monotónico en inicio, progreso y resultado terminal; las solicitudes rechazadas no emiten ciclo de vida, y cada aceptación termina exactamente una vez. El anfitrión autoriza la campaña, elige destinos y aplica/deduplica las acciones terminales recibidas por señal. `level_selection_requested` y `terminal_action_requested` son intenciones para el anfitrión, no órdenes de navegación ni premios aplicados por el kit.
+`TtpGuiApi` es el punto de entrada para consumidores. Las cargas exponen un `operation_id` monotónico en inicio, progreso y resultado terminal; las solicitudes rechazadas no emiten ciclo de vida, y cada aceptación termina exactamente una vez. El anfitrión autoriza la campaña, elige destinos y aplica/deduplica las acciones terminales recibidas por señal. `level_attempt_completed`, `level_selection_requested` y `terminal_action_requested` informan resultados o intenciones; el kit no emite órdenes para cambiar de pantalla ni aplica premios opcionales.
 
 El perfil UI se configura con `configure_ui_presentation()` y se consulta con `get_ui_presentation_config()`. Esta configuración afecta solo componentes reutilizables del kit; las pantallas y controles propios siguen bajo control del anfitrión.
-
-La disponibilidad del selector, tienda y configuración se controla con `set_optional_section_available()` e `is_optional_section_available()`. Esa política se puede cambiar durante la sesión y solo afecta solicitudes de navegación del kit; no decide si el anfitrión presenta sus propias pantallas ni altera progresión, compras o ajustes de gameplay.
 
 Los intentos de gameplay usan IDs distintos a las cargas. Los resultados identicos son idempotentes y los conflictos se rechazan. El snapshot version 4 incluye progreso, saldo, ajustes, inventario, recompensas base, ledger local de transacciones y estado serializable de features; excluye catalogo, reglas, presentacion y proyeccion de campana. El anfitrion configura estos datos antes de restaurar. Se migra solo la version 3 inmediatamente anterior; el anfitrion conserva el IO de guardado.
 

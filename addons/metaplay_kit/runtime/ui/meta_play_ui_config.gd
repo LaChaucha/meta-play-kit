@@ -40,13 +40,6 @@ const CURRENT_SCHEMA_VERSION: int = 1
 @export var inactive_star_texture: Texture2D
 @export var loading_background_texture: Texture2D
 
-## Availability affects only navigation requests made through MetaPlayKit.
-@export_group("Optional section availability")
-@export var level_selection_available: bool = true
-@export var store_available: bool = true
-@export var settings_available: bool = true
-
-
 ## Replaces invalid runtime values independently, preserving all other fields.
 func normalize() -> void:
 	var defaults: MetaPlayUIConfig = MetaPlayUIConfig.new()
