@@ -4,6 +4,8 @@ extends Control
 ## case from the interface documents is reachable from this one scene.
 
 const UI: GDScript = preload("res://addons/metaplay_kit/runtime/ui/ui_factory.gd")
+const ResultPanel: GDScript = preload("res://addons/metaplay_kit/runtime/components/level_result_panel.gd")
+const CampaignPanel: GDScript = preload("res://addons/metaplay_kit/runtime/components/level_campaign_panel.gd")
 const COLOR_GOLD: Color = Color("ffd23f")
 const COLOR_INK: Color = Color("36131d")
 const COLOR_CREAM: Color = Color("fff5d6")
@@ -31,6 +33,7 @@ var _initial_boot: bool = true
 var _current_level_node: Node = null
 var _loading_operation_id: int = 0
 var _current_attempt_id: String = ""
+var _demo_action_claims: Dictionary = {}
 
 
 func _ready() -> void:
@@ -40,7 +43,7 @@ func _ready() -> void:
 	_connect_api()
 	_configure_demo_data()
 	_loading.visible = true
-	TtpGuiApi.request_initial_level_load()
+	TtpGuiApi.request_initial_level_load("level1")
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -143,17 +146,20 @@ func update_music_game_configuration(enabled: bool) -> void:
 	_show_toast("Música activa" if enabled else "Música silenciada")
 
 
-func level_win(attempt_id: String, stars: int, score: int) -> void:
-	var next_level: Variant = unlock_next_level(_current_level_key)
-	var result: MetaPlayResult = TtpGuiApi.complete_level(attempt_id, stars, score, next_level)
-	if result.status != MetaPlayResult.Status.COMPLETED:
-		return
-
-
-func unlock_next_level(current_level: Variant) -> Variant:
-	var keys: Array = TtpGuiApi.get_levels().keys()
-	var index: int = keys.find(current_level)
-	return keys[(index + 1) % keys.size()] if index >= 0 and not keys.is_empty() else "level1"
+func level_win(attempt_id: String, score: int, condition_facts: Dictionary) -> void:
+	var next_key: Variant = _demo_next_level_key(_current_level_key)
+	var presentation: Dictionary = {
+		"title": "¡GANASTE!",
+		"next_level": {"key": next_key, "label": "SIGUIENTE", "action_id": "next_level"} if next_key != null else {},
+		"actions": [
+			{"id": "retry", "label": "REPETIR"},
+			{"id": "double_completion", "label": "VER VIDEO · +50 MONEDAS", "reward_amount": 50},
+			{"id": "home", "label": "INICIO"},
+		],
+	}
+	var result: MetaPlayResult = TtpGuiApi.complete_level(attempt_id, score, condition_facts, presentation)
+	if result.status == MetaPlayResult.Status.COMPLETED:
+		_update_demo_campaign()
 
 
 func retry_level(level: Dictionary) -> void:
@@ -162,12 +168,20 @@ func retry_level(level: Dictionary) -> void:
 
 func load_next_level(level: Dictionary) -> void:
 	var next_level: Dictionary = level.duplicate(true)
-	next_level["key"] = level.get("key", TtpGuiApi.get_next_available_level())
+	next_level["key"] = level.get("key")
 	change_current_level(next_level)
 
 
-func level_lose(attempt_id: String) -> void:
-	TtpGuiApi.report_level_loss(attempt_id)
+func level_lose(attempt_id: String, score: int, condition_facts: Dictionary) -> void:
+	var presentation: Dictionary = {
+		"title": "INTÉNTALO DE NUEVO",
+		"actions": [
+			{"id": "retry", "label": "REPETIR"},
+			{"id": "revive", "label": "VER VIDEO · UNA VIDA EXTRA"},
+			{"id": "home", "label": "INICIO"},
+		],
+	}
+	TtpGuiApi.complete_level(attempt_id, score, condition_facts, presentation)
 
 
 func revive_level(_level: Dictionary) -> void:
@@ -394,22 +408,25 @@ func _connect_api() -> void:
 	TtpGuiApi.music_setting_changed.connect(update_music_game_configuration)
 	TtpGuiApi.revive_reward_claimed.connect(revive_level)
 	TtpGuiApi.reward_doubling_claimed.connect(duplicate_won_coins)
+	TtpGuiApi.level_selection_requested.connect(_on_host_level_selection_requested)
+	TtpGuiApi.terminal_action_requested.connect(_on_host_terminal_action_requested)
 	TtpGuiApi.loading_progress_changed.connect(_on_loading_progress)
 	TtpGuiApi.store_catalog_changed.connect(_on_store_changed)
 
 
 func _configure_demo_data() -> void:
 	var levels: Dictionary = {}
+	var result_rules: Dictionary = {}
 	for index: int in range(1, 7):
 		var level_key: String = "level%d" % index
 		levels[level_key] = {
 			"name": "Nivel %02d" % index,
-			"max_score": 0,
-			"max_stars": 0,
 			"scene_path": "res://demo/scenes/level_stub.tscn",
-			"enabled": index == 1,
 		}
+		result_rules[level_key] = {"max_score": 1500, "star_thresholds": [500, 900, 1200], "required_conditions": ["goal_reached"]}
 	TtpGuiApi.configure_levels(levels)
+	TtpGuiApi.configure_level_result_rules(result_rules)
+	_update_demo_campaign()
 	TtpGuiApi.set_currency_balance(800)
 	TtpGuiApi.configure_settings({
 		"sfx": true,
@@ -425,7 +442,6 @@ func _configure_demo_data() -> void:
 	})
 	TtpGuiApi.configure_currency_rewards({"coins_small": 500, "coins_medium": 1500, "coins_large": 4000})
 	TtpGuiApi.configure_completion_rewards({"level1": 120, "level2": 120, "level3": 120, "level4": 120, "level5": 120, "level6": 120}, 86400)
-	TtpGuiApi.configure_optional_rewards({"double_completion": 120})
 	TtpGuiApi.configure_items({
 		"sun_hat": {"type": 1, "title": "Sombrero solar", "description": "El clásico del kit", "price": "0", "bought": true, "load": true, "group": "hat", "colorTitle": "#7a2d21"},
 		"space_hat": {"type": 1, "title": "Casco espacial", "description": "Un look de otro mundo", "price": "450", "bought": false, "load": false, "group": "hat", "colorTitle": "#7a2d21"},
@@ -440,7 +456,7 @@ func _configure_demo_data() -> void:
 
 
 func _on_tap_to_play() -> void:
-	TtpGuiApi.start_or_resume_game()
+	TtpGuiApi.start_or_resume_game(_demo_play_level_key())
 
 
 func _show_game(payload: Dictionary) -> void:
@@ -460,16 +476,17 @@ func _show_game(payload: Dictionary) -> void:
 
 
 func _show_levels() -> void:
-	var enabled: Array = TtpGuiApi.get_enabled_level_keys()
-	if enabled.is_empty():
-		_on_operation_rejected("No hay niveles disponibles.")
-		return
-	_selected_level_index = clampi(_selected_level_index, 0, enabled.size() - 1)
-	_render_level_selector(enabled)
+	_begin_dialog("CAMPAÑA")
+	var campaign: VBoxContainer = CampaignPanel.new() as VBoxContainer
+	campaign.name = "CampaignHistory"
+	campaign.call("present_campaign", TtpGuiApi.get_campaign_projection(), TtpGuiApi.get_all_level_progress(), TtpGuiApi.get_levels())
+	campaign.connect("level_selection_requested", _on_campaign_entry_selected)
+	_dialog_body.add_child(campaign)
+	_dialog_body.add_child(UI.button("CERRAR", _close_dialog, Vector2(220.0, 52.0)))
 
 
 func _render_level_selector(enabled: Array) -> void:
-	_begin_dialog("SELECTOR DE NIVELES")
+	_begin_dialog("CAMPAÑA")
 	var level_key: Variant = enabled[_selected_level_index]
 	var level: Dictionary = TtpGuiApi.get_level(level_key)
 	var name_label: Label = UI.label(str(level.get("name", "Nivel")), 34, COLOR_GOLD, HORIZONTAL_ALIGNMENT_CENTER)
@@ -501,10 +518,82 @@ func _change_level_preview(direction: int) -> void:
 
 
 func _load_selected_level() -> void:
-	var enabled: Array = TtpGuiApi.get_enabled_level_keys()
-	if enabled.is_empty():
+	var campaign: Array = TtpGuiApi.get_campaign_projection()
+	for raw_entry: Variant in campaign:
+		if raw_entry is Dictionary and bool((raw_entry as Dictionary).get("selectable", false)):
+			TtpGuiApi.select_level((raw_entry as Dictionary).get("key"))
+			return
+
+
+func _on_campaign_entry_selected(level_key: Variant) -> void:
+	TtpGuiApi.select_level(level_key)
+
+
+func _on_host_level_selection_requested(level_key: Variant) -> void:
+	change_current_level({"key": level_key})
+
+
+func _on_result_panel_action_requested(attempt_id: String, action_id: StringName) -> void:
+	TtpGuiApi.request_terminal_action(attempt_id, action_id)
+
+
+func _on_host_terminal_action_requested(attempt_id: String, action_id: StringName) -> void:
+	var claim_key: String = "%s:%s" % [attempt_id, str(action_id)]
+	if _demo_action_claims.has(claim_key):
+		_on_operation_rejected("Esta acción ya fue procesada.")
 		return
-	TtpGuiApi.change_level(enabled[_selected_level_index])
+	match action_id:
+		&"retry":
+			_demo_action_claims[claim_key] = true
+			TtpGuiApi.retry_level(_current_level_key)
+		&"next_level":
+			_demo_action_claims[claim_key] = true
+			_next_level()
+		&"home":
+			_demo_action_claims[claim_key] = true
+			show_home()
+		&"double_completion":
+			_demo_action_claims[claim_key] = "pending"
+			_show_reward_wait("Simulando recompensa de video…", true, attempt_id, action_id)
+		&"revive":
+			_demo_action_claims[claim_key] = "pending"
+			_show_reward_wait("Simulando recompensa de video…", false, attempt_id, action_id)
+		_:
+			_on_operation_rejected("Acción de resultado desconocida.")
+
+
+func _demo_next_level_key(current_level_key: Variant) -> Variant:
+	var keys: Array = TtpGuiApi.get_levels().keys()
+	var current_index: int = keys.find(current_level_key)
+	if current_index >= 0 and current_index + 1 < keys.size():
+		return keys[current_index + 1]
+	return null
+
+
+func _demo_play_level_key() -> Variant:
+	var keys: Array = TtpGuiApi.get_levels().keys()
+	var progress: Dictionary = TtpGuiApi.get_all_level_progress()
+	for level_key: Variant in keys:
+		var level_progress: Dictionary = progress.get(level_key, {}) as Dictionary
+		if not bool(level_progress.get("completed", false)):
+			return level_key
+	return keys.back() if not keys.is_empty() else null
+
+
+func _update_demo_campaign() -> void:
+	var keys: Array = TtpGuiApi.get_levels().keys()
+	var progress: Dictionary = TtpGuiApi.get_all_level_progress()
+	var highest_completed_index: int = -1
+	for index: int in range(keys.size()):
+		var level_progress: Dictionary = progress.get(keys[index], {}) as Dictionary
+		if bool(level_progress.get("completed", false)):
+			highest_completed_index = index
+	var all_completed: bool = not keys.is_empty() and highest_completed_index == keys.size() - 1
+	var projection: Array = []
+	for index: int in range(keys.size()):
+		var available: bool = all_completed or index <= highest_completed_index + 1
+		projection.append({"key": keys[index], "available": available, "selectable": available})
+	TtpGuiApi.configure_campaign_projection(projection)
 
 
 func _show_config() -> void:
@@ -650,71 +739,58 @@ func _simulate_win() -> void:
 	if _current_level_node != null and is_instance_valid(_current_level_node) and _current_level_node.has_method("level_win"):
 		_current_level_node.call("level_win")
 	else:
-		level_win(_current_attempt_id, 3, 1250)
+		level_win(_current_attempt_id, 1250, {"goal_reached": true})
 
 
 func _simulate_lose() -> void:
 	if _current_level_node != null and is_instance_valid(_current_level_node) and _current_level_node.has_method("level_lose"):
 		_current_level_node.call("level_lose")
 	else:
-		level_lose(_current_attempt_id)
+		level_lose(_current_attempt_id, 450, {"goal_reached": false})
 
 
 func _show_win(payload: Dictionary) -> void:
-	_result_payload = payload.duplicate(true)
-	_begin_dialog("¡GANASTE!")
-	var stars: StarRating = StarRating.new()
-	stars.name = "ResultStars"
-	stars.alignment = BoxContainer.ALIGNMENT_CENTER
-	_dialog_body.add_child(stars)
-	stars.update_modal(int(payload.get("stars", 0)))
-	_dialog_body.add_child(UI.label("Puntuación  %s\nRecompensa  +%s monedas" % [TtpGuiApi.format_number(payload.get("score", 0)), TtpGuiApi.format_number(payload.get("coins", 0))], 23, COLOR_INK, HORIZONTAL_ALIGNMENT_CENTER))
-	var actions: HBoxContainer = HBoxContainer.new()
-	actions.name = "WinActions"
-	actions.alignment = BoxContainer.ALIGNMENT_CENTER
-	actions.add_theme_constant_override("separation", 10)
-	_dialog_body.add_child(actions)
-	actions.add_child(UI.button("REPETIR", _retry_current_level, Vector2(170.0, 58.0), preload("res://addons/metaplay_kit/assets/ui/icon_retry.png")))
-	actions.add_child(UI.button("×2", _reward_win, Vector2(140.0, 58.0), preload("res://addons/metaplay_kit/assets/ui/icon_reward.png")))
-	actions.add_child(UI.button("SIGUIENTE", _next_level, Vector2(190.0, 58.0), preload("res://addons/metaplay_kit/assets/ui/icon_next.png")))
-	_dialog_body.add_child(UI.button("VALORAR", _open_rate_page, Vector2(220.0, 48.0)))
+	_present_terminal_result(payload)
 
 
 func _show_lose(payload: Dictionary) -> void:
+	_present_terminal_result(payload)
+
+
+func _present_terminal_result(payload: Dictionary) -> void:
 	_result_payload = payload.duplicate(true)
-	_begin_dialog("INTÉNTALO DE NUEVO")
-	_dialog_body.add_child(UI.label("El nivel continúa disponible.\nPuedes reintentar o simular una recompensa de reanimación.", 22, COLOR_INK, HORIZONTAL_ALIGNMENT_CENTER))
-	var actions: HBoxContainer = HBoxContainer.new()
-	actions.name = "LoseActions"
-	actions.alignment = BoxContainer.ALIGNMENT_CENTER
-	actions.add_theme_constant_override("separation", 12)
-	_dialog_body.add_child(actions)
-	actions.add_child(UI.button("REPETIR", _retry_current_level, Vector2(190.0, 58.0), preload("res://addons/metaplay_kit/assets/ui/icon_retry.png")))
-	actions.add_child(UI.button("REANIMAR", _reward_lose, Vector2(210.0, 58.0), preload("res://addons/metaplay_kit/assets/ui/icon_video.png")))
-	_dialog_body.add_child(UI.button("INICIO", show_home, Vector2(200.0, 52.0)))
+	var presentation: Dictionary = payload.get("presentation", {}) as Dictionary
+	var view_data: Dictionary = presentation.duplicate(true)
+	for key: Variant in payload.keys():
+		view_data[key] = payload[key]
+	_begin_dialog(str(view_data.get("title", "RESULTADO")))
+	var result_panel: PanelContainer = ResultPanel.new() as PanelContainer
+	result_panel.name = "LevelResultPanel"
+	result_panel.connect("action_requested", _on_result_panel_action_requested)
+	result_panel.call("present_result", view_data)
+	_dialog_body.add_child(result_panel)
 
 
 func _retry_current_level() -> void:
-	if _result_payload.has("stars"):
-		TtpGuiApi.retry_level(_current_level_key)
-	else:
-		TtpGuiApi.retry_level(_current_level_key)
+	TtpGuiApi.retry_level(_current_level_key)
 
 
 func _next_level() -> void:
-	var next_key: Variant = _result_payload.get("next_level", TtpGuiApi.get_next_available_level())
-	TtpGuiApi.request_level_load(next_key)
+	var presentation: Dictionary = _result_payload.get("presentation", {}) as Dictionary
+	var next_level: Dictionary = presentation.get("next_level", {}) as Dictionary
+	if not next_level.is_empty():
+		TtpGuiApi.request_level_load(next_level.get("key"))
 
 
 func _reward_win() -> void:
-	_show_reward_wait("Duplicando monedas…", true)
+	_on_result_panel_action_requested(_current_attempt_id, &"double_completion")
 
 
 func _reward_lose() -> void:
-	_show_reward_wait("Preparando reanimación…", false)
+	_on_result_panel_action_requested(_current_attempt_id, &"revive")
 
 
-func _show_reward_wait(message: String, is_win: bool) -> void:
+func _show_reward_wait(message: String, is_win: bool, attempt_id: String, action_id: StringName) -> void:
 	_begin_dialog("RECOMPENSA")
 	_dialog_body.add_child(UI.label(message, 26, COLOR_INK, HORIZONTAL_ALIGNMENT_CENTER))
 	var progress: ProgressBar = ProgressBar.new()
@@ -728,11 +804,22 @@ func _show_reward_wait(message: String, is_win: bool) -> void:
 	tween.tween_property(progress, "value", 1.0, 1.2)
 	await tween.finished
 	if is_win:
-		TtpGuiApi.claim_reward_doubling(_current_attempt_id, "demo-double-%s" % _current_attempt_id)
+		TtpGuiApi.set_currency_balance(TtpGuiApi.get_currency_balance() + 50)
+		_demo_action_claims["%s:%s" % [attempt_id, str(action_id)]] = true
 		_show_toast("Monedas duplicadas")
-		_next_level()
+		var updated_payload: Dictionary = _result_payload.duplicate(true)
+		var updated_presentation: Dictionary = updated_payload.get("presentation", {}) as Dictionary
+		var updated_actions: Array = updated_presentation.get("actions", []) as Array
+		for index: int in range(updated_actions.size() - 1, -1, -1):
+			var action: Dictionary = updated_actions[index] as Dictionary
+			if StringName(str(action.get("id", ""))) == action_id:
+				updated_actions.remove_at(index)
+		updated_presentation["actions"] = updated_actions
+		updated_payload["presentation"] = updated_presentation
+		_present_terminal_result(updated_payload)
 	else:
-		TtpGuiApi.revive_after_reward(_current_attempt_id)
+		_demo_action_claims["%s:%s" % [attempt_id, str(action_id)]] = true
+		TtpGuiApi.revive_after_reward(attempt_id)
 
 
 func _show_pause() -> void:

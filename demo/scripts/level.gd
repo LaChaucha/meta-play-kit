@@ -42,7 +42,7 @@ func level_win() -> void:
 	stop_level()
 	won.emit()
 	if stage != null and stage.has_method("level_win"):
-		stage.call("level_win", attempt_id, 3, 1250)
+		stage.call("level_win", attempt_id, 1250, {"goal_reached": true})
 
 
 func level_lose() -> void:
@@ -51,7 +51,7 @@ func level_lose() -> void:
 	stop_level()
 	lost.emit()
 	if stage != null and stage.has_method("level_lose"):
-		stage.call("level_lose", attempt_id)
+		stage.call("level_lose", attempt_id, 450, {"goal_reached": false})
 
 
 func revive() -> void:

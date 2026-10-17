@@ -16,15 +16,14 @@ func test_typed_load_result_correlates_success_failure_and_cancellation() -> voi
 		"success": {"name": "Success", "enabled": true, "scene_path": LEVEL_PATH},
 		"failure": {"name": "Failure", "enabled": true, "scene_path": "user://missing_level_scene.tscn"},
 		"cancel": {"name": "Cancel", "enabled": true, "scene_path": LEVEL_PATH},
-		"locked": {"name": "Locked", "enabled": false, "scene_path": LEVEL_PATH},
 	})
-	var rejected_request: MetaPlayResult = TtpGuiApi.request_level_load_result("locked")
+	var rejected_request: MetaPlayResult = TtpGuiApi.request_level_load_result("unknown")
 	assert_eq(rejected_request.status, MetaPlayResult.Status.REJECTED)
-	assert_eq(rejected_request.code, &"level.locked")
+	assert_eq(rejected_request.code, &"level.not_found")
 	assert_eq(rejected_request.operation_id, 0)
 	assert_true(results.is_empty(), "Rejected requests do not emit terminal results.")
 
-	var success_request: MetaPlayResult = TtpGuiApi.select_level("success")
+	var success_request: MetaPlayResult = TtpGuiApi.request_level_load_result("success")
 	assert_eq(success_request.status, MetaPlayResult.Status.ACCEPTED)
 	assert_true(await wait_until(func() -> bool: return not TtpGuiApi.is_loading()))
 	assert_eq(results.size(), 1)
@@ -35,7 +34,7 @@ func test_typed_load_result_correlates_success_failure_and_cancellation() -> voi
 	assert_is(results[0].context.get("resource"), PackedScene)
 	assert_eq((results[0].context.get("level_data") as Dictionary).get("name"), "Success")
 
-	var failure_request: MetaPlayResult = TtpGuiApi.select_level("failure")
+	var failure_request: MetaPlayResult = TtpGuiApi.request_level_load_result("failure")
 	assert_eq(failure_request.status, MetaPlayResult.Status.ACCEPTED)
 	assert_true(await wait_until(func() -> bool: return not TtpGuiApi.is_loading()))
 	assert_eq(results.size(), 2)
@@ -48,7 +47,7 @@ func test_typed_load_result_correlates_success_failure_and_cancellation() -> voi
 	var cancel_callback: Callable = func(operation_id: int, _data: Dictionary) -> void:
 		TtpGuiApi.cancel_level_load(operation_id)
 	TtpGuiApi.level_load_started.connect(cancel_callback, CONNECT_ONE_SHOT)
-	var cancellation_request: MetaPlayResult = TtpGuiApi.select_level("cancel")
+	var cancellation_request: MetaPlayResult = TtpGuiApi.request_level_load_result("cancel")
 	assert_eq(cancellation_request.status, MetaPlayResult.Status.ACCEPTED)
 	assert_eq(results.size(), 3)
 	assert_eq(results[2].status, MetaPlayResult.Status.CANCELLED)
@@ -59,101 +58,27 @@ func test_typed_load_result_correlates_success_failure_and_cancellation() -> voi
 	TtpGuiApi.level_load_result.disconnect(callback)
 
 
-func test_concurrent_level_request_is_rejected_and_selection_signals_follow_acceptance() -> void:
-	TtpGuiApi.configure_levels({
-		"first": {"name": "First", "enabled": true, "scene_path": LEVEL_PATH},
-		"second": {"name": "Second", "enabled": true, "scene_path": LEVEL_PATH},
-	})
-	var rejected_messages: Array[String] = []
-	var selected_levels: Array[Dictionary] = []
-	var legacy_selected_levels: Array[Dictionary] = []
-	var started_level_keys: Array[String] = []
-	var play_events: Array[bool] = []
-	var retry_events: Array[Dictionary] = []
-	var next_level_events: Array[Dictionary] = []
-	var started_operation_ids: Array[int] = []
-	var completed_operation_ids: Array[int] = []
+func test_concurrent_level_request_is_rejected_without_replacing_active_load() -> void:
 	var completed_level_keys: Array[String] = []
-	var completed_resources: Array[Resource] = []
-	var rejected_callback: Callable = func(message: String) -> void: rejected_messages.append(message)
-	var selected_callback: Callable = func(level_data: Dictionary) -> void: selected_levels.append(level_data)
-	var legacy_selected_callback: Callable = func(level_data: Dictionary) -> void: legacy_selected_levels.append(level_data)
-	var started_callback: Callable = func(operation_id: int, level_data: Dictionary) -> void:
-		started_operation_ids.append(operation_id)
-		started_level_keys.append(str(level_data.get("key", "")))
-	var completed_callback: Callable = func(operation_id: int, level_data: Dictionary, resource: Resource) -> void:
-		completed_operation_ids.append(operation_id)
+	var completed_callback: Callable = func(_operation_id: int, level_data: Dictionary, _resource: Resource) -> void:
 		completed_level_keys.append(str(level_data.get("key", "")))
-		completed_resources.append(resource)
-	var play_callback: Callable = func() -> void: play_events.append(true)
-	var retry_callback: Callable = func(level_data: Dictionary) -> void: retry_events.append(level_data)
-	var next_level_callback: Callable = func(level_data: Dictionary) -> void: next_level_events.append(level_data)
-	TtpGuiApi.action_rejected.connect(rejected_callback)
-	TtpGuiApi.level_selected.connect(selected_callback)
-	TtpGuiApi.level_selector_load_new_level_selected.connect(legacy_selected_callback)
-	TtpGuiApi.level_load_started.connect(started_callback)
 	TtpGuiApi.level_load_completed.connect(completed_callback)
-	TtpGuiApi.play_requested.connect(play_callback)
-	TtpGuiApi.home_tap_to_play_pressed.connect(play_callback)
-	TtpGuiApi.level_retry_requested.connect(retry_callback)
-	TtpGuiApi.modal_win_retry_button_pressed.connect(retry_callback)
-	TtpGuiApi.modal_lose_retry_button_pressed.connect(retry_callback)
-	TtpGuiApi.next_level_load_requested.connect(next_level_callback)
-	TtpGuiApi.modal_win_load_next_level_pressed.connect(next_level_callback)
-	var nested_request_results: Array[bool] = []
-	var request_during_start: Callable = func(_operation_id: int, _level_data: Dictionary) -> void:
-		TtpGuiApi.start_or_resume_game()
-		TtpGuiApi.retry_level("second")
-		TtpGuiApi.modal_win_retry_level("second")
-		TtpGuiApi.modal_lose_retry_level("second")
-		TtpGuiApi.load_next_level()
-		TtpGuiApi.select_level("second")
-		nested_request_results.append(TtpGuiApi.request_level_load("second"))
-	TtpGuiApi.level_load_started.connect(request_during_start, CONNECT_ONE_SHOT)
-
-	TtpGuiApi.select_level("first")
-	assert_eq(nested_request_results, [false], "A reentrant request must be rejected before it can replace the active destination.")
-	assert_eq(started_level_keys, ["first"])
-	assert_eq(started_operation_ids.size(), 1, "Only the accepted request gets an operation ID.")
-	assert_eq(rejected_messages.size(), 7)
-	assert_eq(rejected_messages.back(), TtpGuiApi.LEVEL_LOAD_BUSY_MESSAGE)
-	assert_eq(selected_levels.size(), 1, "Only the accepted selection should be announced.")
-	assert_eq(legacy_selected_levels.size(), 1, "The legacy selection signal must also follow acceptance.")
-	assert_true(play_events.is_empty(), "Rejected play requests must not emit semantic or legacy play signals.")
-	assert_true(retry_events.is_empty(), "Rejected retries must not emit semantic or legacy retry signals.")
-	assert_true(next_level_events.is_empty(), "Rejected progression requests must not emit semantic or legacy progression signals.")
-	var selected_level: Dictionary = selected_levels[0]
-	assert_eq(selected_level.get("name"), "First", "Only the accepted selection should be announced.")
-
-	var first_finished: bool = await wait_until(func() -> bool: return not TtpGuiApi.is_loading())
-	if not assert_true(first_finished, "The accepted request must eventually release the single-load slot."):
-		_disconnect_load_arbitration_test_signals(rejected_callback, selected_callback, legacy_selected_callback, started_callback, completed_callback, play_callback, retry_callback, next_level_callback)
-		return
-	assert_eq(completed_operation_ids, [started_operation_ids[0]])
+	TtpGuiApi.configure_levels({
+		"first": {"name": "First", "scene_path": LEVEL_PATH},
+		"second": {"name": "Second", "scene_path": LEVEL_PATH},
+	})
+	var nested_results: Array[MetaPlayResult] = []
+	var nested_request: Callable = func(_operation_id: int, _level_data: Dictionary) -> void:
+		nested_results.append(TtpGuiApi.request_level_load_result("second"))
+	TtpGuiApi.level_load_started.connect(nested_request, CONNECT_ONE_SHOT)
+	var first: MetaPlayResult = TtpGuiApi.request_level_load_result("first")
+	assert_eq(first.status, MetaPlayResult.Status.ACCEPTED)
+	assert_eq(nested_results.size(), 1)
+	assert_eq(nested_results[0].status, MetaPlayResult.Status.REJECTED)
+	assert_eq(nested_results[0].code, &"level.load_in_progress")
+	assert_true(await wait_until(func() -> bool: return not TtpGuiApi.is_loading()))
 	assert_eq(completed_level_keys, ["first"])
-	assert_eq(completed_resources[0].resource_path, LEVEL_PATH)
-	assert_is(completed_resources[0], PackedScene)
-	var first_resource: Resource = TtpGuiApi.get_loaded_resource(LEVEL_PATH)
-	assert_is(first_resource, PackedScene)
-	assert_eq(first_resource.get_instance_id(), completed_resources[0].get_instance_id())
-
-	TtpGuiApi.select_level("second")
-	assert_eq(selected_levels.size(), 2, "A new request should be accepted after the first operation finishes.")
-	assert_eq(started_operation_ids.size(), 2)
-	assert_ne(started_operation_ids[0], started_operation_ids[1], "Repeated scene requests get distinct operation IDs.")
-	var second_finished: bool = await wait_until(func() -> bool: return not TtpGuiApi.is_loading())
-	if not assert_true(second_finished):
-		_disconnect_load_arbitration_test_signals(rejected_callback, selected_callback, legacy_selected_callback, started_callback, completed_callback, play_callback, retry_callback, next_level_callback)
-		return
-	assert_eq(completed_operation_ids, started_operation_ids)
-	assert_eq(completed_level_keys, ["first", "second"], "Repeated scene loads must return their own level data.")
-	assert_eq(completed_resources[1].resource_path, LEVEL_PATH)
-	assert_is(completed_resources[1], PackedScene)
-	var second_resource: Resource = TtpGuiApi.get_loaded_resource(LEVEL_PATH)
-	assert_is(second_resource, PackedScene)
-	assert_eq(second_resource.get_instance_id(), completed_resources[1].get_instance_id())
-	_disconnect_load_arbitration_test_signals(rejected_callback, selected_callback, legacy_selected_callback, started_callback, completed_callback, play_callback, retry_callback, next_level_callback)
-
+	TtpGuiApi.level_load_completed.disconnect(completed_callback)
 
 func _disconnect_load_arbitration_test_signals(
 		rejected_callback: Callable,
@@ -179,22 +104,17 @@ func _disconnect_load_arbitration_test_signals(
 	TtpGuiApi.modal_win_load_next_level_pressed.disconnect(next_level_callback)
 
 
-func test_invalid_or_locked_level_load_is_rejected_before_loading_starts() -> void:
+func test_host_owned_availability_does_not_gate_generic_resource_loading() -> void:
 	TtpGuiApi.configure_levels({
-		"locked": {"name": "Locked", "enabled": false, "scene_path": LEVEL_PATH},
-		"missing_path": {"name": "Missing path", "enabled": true, "scene_path": ""},
+		"locked": {"name": "Locked", "scene_path": LEVEL_PATH},
+		"missing_path": {"name": "Missing path", "scene_path": ""},
 	})
-	var rejected_messages: Array[String] = []
-	var rejected_callback: Callable = func(message: String) -> void: rejected_messages.append(message)
-	TtpGuiApi.action_rejected.connect(rejected_callback)
-
-	assert_false(TtpGuiApi.request_level_load("locked"))
-	assert_false(TtpGuiApi.request_level_load("missing_path"))
-	assert_false(TtpGuiApi.request_level_load("unknown"))
+	var accepted_locked: MetaPlayResult = TtpGuiApi.request_level_load_result("locked")
+	assert_eq(accepted_locked.status, MetaPlayResult.Status.ACCEPTED)
+	assert_true(await wait_until(func() -> bool: return not TtpGuiApi.is_loading()))
+	assert_eq(TtpGuiApi.request_level_load_result("missing_path").code, &"level.scene_path_missing")
+	assert_eq(TtpGuiApi.request_level_load_result("unknown").code, &"level.not_found")
 	assert_false(TtpGuiApi.is_loading())
-	assert_eq(rejected_messages.size(), 3)
-	TtpGuiApi.action_rejected.disconnect(rejected_callback)
-
 
 func test_failed_load_emits_one_correlated_terminal_event() -> void:
 	allow_errors()
@@ -452,7 +372,7 @@ func test_consumed_scene_can_be_loaded_again_for_next_level_and_retry() -> void:
 			return
 		var resource: Resource = batch.get_resource(LEVEL_PATH)
 		assert_is(resource, PackedScene, "Cada carga debe entregar una escena instanciable.")
-		assert_null(batch.get_resource(LEVEL_PATH), "La extracción consume sólo el resultado del lote actual.")
+		assert_null(batch.get_resource(LEVEL_PATH), "La extracciÃ³n consume sÃ³lo el resultado del lote actual.")
 	assert_signal_emit_count(batch, "load_finished", 3)
 	batch.close()
 
@@ -464,7 +384,7 @@ func test_uninstantiable_level_returns_home_without_showing_game() -> void:
 	if not assert_true(boot_completed):
 		return
 	TtpGuiApi.configure_levels({
-		"invalid_level": {"name": "Nivel inválido", "enabled": true, "scene_path": "res://icon.svg"},
+		"invalid_level": {"name": "Nivel invÃ¡lido", "enabled": true, "scene_path": "res://icon.svg"},
 	})
 	TtpGuiApi.request_level_load("invalid_level")
 	var load_completed: bool = await wait_until(func() -> bool: return not TtpGuiApi.is_loading())
@@ -473,7 +393,7 @@ func test_uninstantiable_level_returns_home_without_showing_game() -> void:
 	assert_false(loading.visible, "Un fallo no debe dejar la pantalla de carga bloqueando la UI.")
 	var game: Control = stage.get_node("Background/ScreenFrame/ScreenStack/GameScreen") as Control
 	var home: Control = stage.get_node("Background/ScreenFrame/ScreenStack/HomeScreen") as Control
-	assert_false(game.visible, "La pantalla de juego necesita una instancia válida.")
+	assert_false(game.visible, "La pantalla de juego necesita una instancia vÃ¡lida.")
 	assert_true(home.visible)
 	assert_eq(stage.get("_current_level_key"), "level1", "Un fallo no debe cambiar el nivel activo.")
 

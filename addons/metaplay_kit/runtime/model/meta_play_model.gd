@@ -17,6 +17,9 @@ enum ItemType {
 }
 
 var levels: Dictionary = {}
+var level_progress: Dictionary = {}
+var level_result_rules: Dictionary = {}
+var campaign_projection: Array = []
 var configuration: Dictionary = {
 	"sfx": true,
 	"music": true,
@@ -29,7 +32,6 @@ var coin_values: Dictionary = {}
 var coins: int = 0
 var attempts: Dictionary = {}
 var completion_rewards: Dictionary = {}
-var optional_rewards: Dictionary = {}
 var reward_cooldown_seconds: int = 0
 var last_base_reward_claimed_at: Dictionary = {}
 var reward_claims: Dictionary = {}
@@ -48,21 +50,11 @@ func configure_completion_rewards(values: Dictionary, cooldown_seconds: int) -> 
 	return {"ok": true}
 
 
-func configure_optional_rewards(values: Dictionary) -> Dictionary:
-	for reward_type: Variant in values.keys():
-		var raw_amount: Variant = values[reward_type]
-		if str(reward_type).strip_edges().is_empty() or not raw_amount is int or int(raw_amount) < 0:
-			return _completion_failure(&"reward.configuration_invalid", "Optional rewards require non-empty types and non-negative amounts.", {"reward_type": reward_type})
-	optional_rewards = values.duplicate(true)
-	return {"ok": true}
-
-
 func begin_attempt(level_key: Variant) -> Dictionary:
 	if not levels.has(level_key):
 		return _completion_failure(&"level.not_found", "The requested level does not exist.", {"level_key": level_key})
-	var level: Dictionary = get_level(level_key)
-	if not bool(level.get("enabled", false)):
-		return _completion_failure(&"level.locked", "The requested level is unavailable.", {"level_key": level_key})
+	if not level_result_rules.has(level_key):
+		return _completion_failure(&"level.rules_missing", "The requested level has no result rules.", {"level_key": level_key})
 	_attempt_sequence += 1
 	for prior_id: Variant in attempts.keys():
 		var prior_attempt: Dictionary = (attempts[prior_id] as Dictionary).duplicate(true)
@@ -89,19 +81,32 @@ func revive_attempt(attempt_id: String) -> bool:
 	if not attempts.has(attempt_id):
 		return false
 	var attempt: Dictionary = (attempts[attempt_id] as Dictionary).duplicate(true)
-	if str(attempt.get("status", "")) != "lost":
+	if str(attempt.get("status", "")) != "failed":
 		return false
+	attempt["result"] = {}
+	attempt.erase("completion")
 	attempt["status"] = "active"
 	attempts[attempt_id] = attempt
 	return true
 
 
-func record_attempt_result(attempt_id: String, stars: int, score: int, next_level_key: Variant) -> Dictionary:
+func record_attempt_result(
+		attempt_id: String,
+		score: int,
+		condition_facts: Dictionary,
+		presentation: Dictionary,
+		force_loss: bool = false
+	) -> Dictionary:
 	if not attempts.has(attempt_id):
 		return _completion_failure(&"attempt.not_found", "The gameplay attempt is unknown or stale.", {"attempt_id": attempt_id})
 	var attempt: Dictionary = (attempts[attempt_id] as Dictionary).duplicate(true)
-	var requested_result: Dictionary = {"stars": clampi(stars, 0, 3), "score": maxi(0, score), "next_level_key": next_level_key}
-	if str(attempt.get("status", "")) == "completed":
+	var level_key: Variant = attempt.get("level_key")
+	var evaluation: Dictionary = evaluate_level_result(level_key, score, condition_facts, force_loss)
+	if not bool(evaluation.get("ok", false)):
+		return evaluation
+	var requested_result: Dictionary = evaluation.get("result", {}).duplicate(true)
+	requested_result["presentation"] = presentation.duplicate(true)
+	if str(attempt.get("status", "")) in ["completed", "failed"]:
 		if attempt.get("result", {}) == requested_result:
 			var duplicate_result: Dictionary = attempt.get("completion", {}).duplicate(true)
 			duplicate_result["duplicate"] = true
@@ -109,25 +114,102 @@ func record_attempt_result(attempt_id: String, stars: int, score: int, next_leve
 		return _completion_failure(&"attempt.already_completed", "The attempt was already completed with a different result.", {"attempt_id": attempt_id})
 	if str(attempt.get("status", "")) != "active":
 		return _completion_failure(&"attempt.stale", "The gameplay attempt is no longer active.", {"attempt_id": attempt_id})
-	var level_key: Variant = attempt.get("level_key")
 	if not levels.has(level_key):
 		return _completion_failure(&"level.not_found", "The attempt level no longer exists.", {"attempt_id": attempt_id, "level_key": level_key})
-	var level: Dictionary = get_level(level_key)
-	level["max_stars"] = maxi(int(level.get("max_stars", 0)), int(requested_result["stars"]))
-	level["max_score"] = maxi(int(level.get("max_score", 0)), int(requested_result["score"]))
-	levels[level_key] = level
-	if next_level_key != null and levels.has(next_level_key):
-		var next_level: Dictionary = get_level(next_level_key)
-		next_level["enabled"] = true
-		levels[next_level_key] = next_level
-	attempt["status"] = "completed"
+	var progress: Dictionary = get_level_progress(level_key)
+	progress["best_score"] = maxi(int(progress.get("best_score", 0)), int(requested_result["score"]))
+	progress["best_stars"] = maxi(int(progress.get("best_stars", 0)), int(requested_result["stars"]))
+	if bool(requested_result.get("won", false)):
+		progress["completed"] = true
+	level_progress[level_key] = progress
+	attempt["status"] = "completed" if bool(requested_result.get("won", false)) else "failed"
 	attempt["result"] = requested_result.duplicate(true)
 	attempts[attempt_id] = attempt
 	levels_changed.emit()
-	var response: Dictionary = {"ok": true, "attempt_id": attempt_id, "level_key": level_key, "level": level.duplicate(true), "next_level_key": next_level_key, "stars": requested_result["stars"], "score": requested_result["score"], "coins": coins, "duplicate": false}
+	var response: Dictionary = {"ok": true, "attempt_id": attempt_id, "level_key": level_key, "outcome": requested_result["outcome"], "won": requested_result["won"], "stars": requested_result["stars"], "score": requested_result["score"], "progress": progress.duplicate(true), "presentation": presentation.duplicate(true), "coins": coins, "duplicate": false}
 	attempt["completion"] = response.duplicate(true)
 	attempts[attempt_id] = attempt
 	return response
+
+
+func configure_level_result_rules(rules_by_level: Dictionary) -> Dictionary:
+	var validated: Dictionary = {}
+	for level_key: Variant in rules_by_level.keys():
+		var raw_rules: Variant = rules_by_level[level_key]
+		if not levels.has(level_key) or not raw_rules is Dictionary:
+			return _completion_failure(&"level.rules_invalid", "Result rules must reference registered levels and be dictionaries.", {"level_key": level_key})
+		var rules: Dictionary = raw_rules as Dictionary
+		var max_score: Variant = rules.get("max_score")
+		var raw_thresholds: Variant = rules.get("star_thresholds")
+		var raw_conditions: Variant = rules.get("required_conditions", [])
+		if not max_score is int or int(max_score) < 0 or not raw_thresholds is Array or (raw_thresholds as Array).size() != 3 or not raw_conditions is Array:
+			return _completion_failure(&"level.rules_invalid", "Level rules require a non-negative max score, three thresholds, and required conditions.", {"level_key": level_key})
+		var thresholds: Array = raw_thresholds as Array
+		var previous_threshold: int = 0
+		for threshold_index: int in range(thresholds.size()):
+			var raw_threshold: Variant = thresholds[threshold_index]
+			if not raw_threshold is int or int(raw_threshold) < previous_threshold or int(raw_threshold) > int(max_score):
+				return _completion_failure(&"level.rules_invalid", "Star thresholds must be non-decreasing and within the maximum score.", {"level_key": level_key, "threshold_index": threshold_index})
+			previous_threshold = int(raw_threshold)
+		var seen_conditions: Dictionary = {}
+		for raw_condition: Variant in raw_conditions as Array:
+			if not (raw_condition is String or raw_condition is StringName) or str(raw_condition).strip_edges().is_empty() or seen_conditions.has(str(raw_condition)):
+				return _completion_failure(&"level.rules_invalid", "Required condition keys must be unique, non-empty strings.", {"level_key": level_key})
+			seen_conditions[str(raw_condition)] = true
+		validated[level_key] = {
+			"max_score": int(max_score),
+			"star_thresholds": thresholds.duplicate(true),
+			"required_conditions": raw_conditions.duplicate(true),
+		}
+	level_result_rules = validated
+	return {"ok": true}
+
+
+func evaluate_level_result(
+		level_key: Variant,
+		score: int,
+		condition_facts: Dictionary,
+		force_loss: bool = false
+	) -> Dictionary:
+	if not levels.has(level_key):
+		return _completion_failure(&"level.not_found", "The requested level does not exist.", {"level_key": level_key})
+	if not level_result_rules.has(level_key):
+		return _completion_failure(&"level.rules_missing", "The requested level has no result rules.", {"level_key": level_key})
+	var rules: Dictionary = level_result_rules[level_key] as Dictionary
+	var max_score: int = int(rules.get("max_score", 0))
+	if score < 0 or score > max_score:
+		return _completion_failure(&"level.result_invalid", "The submitted score is outside the configured range.", {"level_key": level_key, "score": score, "max_score": max_score})
+	if force_loss:
+		return {"ok": true, "result": {"outcome": "lost", "won": false, "stars": 0, "score": score, "condition_facts": condition_facts.duplicate(true)}}
+	var conditions: Array = rules.get("required_conditions", []) as Array
+	for condition_key: Variant in conditions:
+		if not condition_facts.has(condition_key) or not condition_facts[condition_key] is bool or not bool(condition_facts[condition_key]):
+			var failed_result: Dictionary = {"ok": true, "result": {"outcome": "lost", "won": false, "stars": 0, "score": score, "condition_facts": condition_facts.duplicate(true)}}
+			return failed_result
+	var thresholds: Array = rules.get("star_thresholds", []) as Array
+	var stars: int = 0
+	for star_index: int in range(thresholds.size()):
+		if score >= int(thresholds[star_index]):
+			stars = star_index + 1
+	return {"ok": true, "result": {"outcome": "won", "won": true, "stars": stars, "score": score, "condition_facts": condition_facts.duplicate(true)}}
+
+
+func configure_campaign_projection(projection: Array) -> Dictionary:
+	var validated: Array = []
+	var seen_levels: Dictionary = {}
+	for raw_entry: Variant in projection:
+		if not raw_entry is Dictionary:
+			return _completion_failure(&"campaign.projection_invalid", "Campaign entries must be dictionaries.", {})
+		var entry: Dictionary = raw_entry as Dictionary
+		var level_key: Variant = entry.get("key")
+		var available: Variant = entry.get("available")
+		var selectable: Variant = entry.get("selectable")
+		if not levels.has(level_key) or not available is bool or not selectable is bool or (bool(selectable) and not bool(available)) or seen_levels.has(level_key):
+			return _completion_failure(&"campaign.projection_invalid", "Campaign entries must uniquely reference levels and provide valid availability and selection flags.", {"level_key": level_key})
+		seen_levels[level_key] = true
+		validated.append({"key": level_key, "available": bool(available), "selectable": bool(selectable)})
+	campaign_projection = validated
+	return {"ok": true}
 
 
 func claim_base_reward(attempt_id: String, now_unix_seconds: int) -> Dictionary:
@@ -155,32 +237,21 @@ func claim_base_reward(attempt_id: String, now_unix_seconds: int) -> Dictionary:
 	return result
 
 
-func claim_optional_reward(attempt_id: String, claim_id: String, reward_type: StringName) -> Dictionary:
-	if not attempts.has(attempt_id):
-		return _completion_failure(&"attempt.not_found", "The gameplay attempt is unknown or stale.", {"attempt_id": attempt_id})
-	var attempt: Dictionary = attempts[attempt_id] as Dictionary
-	if str(attempt.get("status", "")) != "completed":
-		return _completion_failure(&"attempt.not_completed", "The attempt has no completed result.", {"attempt_id": attempt_id})
-	if claim_id.strip_edges().is_empty():
-		return _completion_failure(&"reward.claim_id_required", "A unique host claim ID is required.", {"attempt_id": attempt_id})
-	var prior: Dictionary = reward_claims.get("optional:%s" % claim_id, {})
-	if not prior.is_empty():
-		if str(prior.get("attempt_id", "")) != attempt_id or StringName(str(prior.get("reward_type", ""))) != reward_type:
-			return _completion_failure(&"reward.claim_id_conflict", "The claim ID was already used for another reward.", {"claim_id": claim_id})
-		var duplicate: Dictionary = prior.duplicate(true)
-		duplicate["duplicate"] = true
-		return duplicate
-	if not optional_rewards.has(reward_type):
-		return _completion_failure(&"reward.type_not_configured", "The optional reward type is not configured.", {"reward_type": reward_type})
-	var amount: int = maxi(0, int(optional_rewards[reward_type]))
-	add_coins(amount)
-	var result: Dictionary = {"ok": true, "attempt_id": attempt_id, "claim_id": claim_id, "reward_type": reward_type, "granted": true, "amount": amount, "coins": coins, "duplicate": false}
-	reward_claims["optional:%s" % claim_id] = result.duplicate(true)
-	return result
-
-
 func export_completion_state() -> Dictionary:
-	return {"version": 1, "attempts": attempts.duplicate(true), "reward_claims": reward_claims.duplicate(true), "last_base_reward_claimed_at": last_base_reward_claimed_at.duplicate(true), "attempt_sequence": _attempt_sequence}
+	var persisted_attempts: Dictionary = attempts.duplicate(true)
+	for attempt_id: Variant in persisted_attempts.keys():
+		var raw_attempt: Variant = persisted_attempts[attempt_id]
+		if not raw_attempt is Dictionary:
+			continue
+		var attempt: Dictionary = raw_attempt as Dictionary
+		var result: Dictionary = attempt.get("result", {}) as Dictionary
+		result.erase("presentation")
+		attempt["result"] = result
+		var completion: Dictionary = attempt.get("completion", {}) as Dictionary
+		completion.erase("presentation")
+		attempt["completion"] = completion
+		persisted_attempts[attempt_id] = attempt
+	return {"version": 1, "attempts": persisted_attempts, "reward_claims": reward_claims.duplicate(true), "last_base_reward_claimed_at": last_base_reward_claimed_at.duplicate(true), "attempt_sequence": _attempt_sequence}
 
 
 func can_restore_completion_state(snapshot: Dictionary, available_levels: Dictionary) -> bool:
@@ -200,18 +271,20 @@ func can_restore_completion_state(snapshot: Dictionary, available_levels: Dictio
 			return false
 		var attempt: Dictionary = entry as Dictionary
 		var attempt_status: String = str(attempt.get("status", ""))
-		if not available_levels.has(attempt.get("level_key")) or not ["active", "lost", "completed", "abandoned"].has(attempt_status):
+		if not available_levels.has(attempt.get("level_key")) or not ["active", "lost", "failed", "completed", "abandoned"].has(attempt_status):
 			return false
-		if attempt_status == "completed":
+		if attempt_status in ["completed", "failed"]:
 			var result_raw: Variant = attempt.get("result")
 			var completion_raw: Variant = attempt.get("completion")
 			if not result_raw is Dictionary or not completion_raw is Dictionary:
 				return false
 			var attempt_result: Dictionary = result_raw as Dictionary
 			var completion: Dictionary = completion_raw as Dictionary
-			if not attempt_result.get("stars") is int or not attempt_result.get("score") is int:
+			if not attempt_result.get("stars") is int or not attempt_result.get("score") is int or not attempt_result.get("won") is bool:
 				return false
 			if int(attempt_result["stars"]) < 0 or int(attempt_result["stars"]) > 3 or int(attempt_result["score"]) < 0:
+				return false
+			if bool(attempt_result["won"]) != (attempt_status == "completed"):
 				return false
 			if str(completion.get("attempt_id", "")) != str(attempt_id) or completion.get("level_key") != attempt.get("level_key"):
 				return false
@@ -225,9 +298,6 @@ func can_restore_completion_state(snapshot: Dictionary, available_levels: Dictio
 			return false
 		if str(claim_key).begins_with("base:"):
 			if str(claim_key) != "base:%s" % claim_attempt_id or str(((raw_attempts as Dictionary)[claim_attempt_id] as Dictionary).get("status", "")) != "completed":
-				return false
-		elif str(claim_key).begins_with("optional:"):
-			if str(claim_key) != "optional:%s" % str(claim.get("claim_id", "")) or str(claim.get("reward_type", "")).is_empty():
 				return false
 		else:
 			return false
@@ -257,6 +327,11 @@ func _completion_failure(code: StringName, message: String, context: Dictionary)
 
 func set_levels(value: Dictionary) -> void:
 	levels = value.duplicate(true)
+	level_progress.clear()
+	level_result_rules.clear()
+	campaign_projection.clear()
+	for level_key: Variant in levels.keys():
+		level_progress[level_key] = {"completed": false, "best_score": 0, "best_stars": 0}
 	levels_changed.emit()
 
 
@@ -296,22 +371,27 @@ func get_level(level_key: Variant) -> Dictionary:
 	return raw.duplicate(true) if raw is Dictionary else {}
 
 
+func get_level_progress(level_key: Variant) -> Dictionary:
+	if not level_progress.has(level_key):
+		return {}
+	var raw: Variant = level_progress[level_key]
+	return raw.duplicate(true) if raw is Dictionary else {}
+
+
+func get_all_level_progress() -> Dictionary:
+	return level_progress.duplicate(true)
+
+
 func get_enabled_level_keys() -> Array:
 	var result: Array = []
-	for level_key: Variant in levels.keys():
-		var raw: Variant = levels[level_key]
-		if raw is Dictionary and bool((raw as Dictionary).get("enabled", false)):
-			result.append(level_key)
+	for raw_entry: Variant in campaign_projection:
+		if raw_entry is Dictionary and bool((raw_entry as Dictionary).get("available", false)):
+			result.append((raw_entry as Dictionary).get("key"))
 	return result
 
 
 func get_next_level_to_play() -> Variant:
-	var enabled: Array = get_enabled_level_keys()
-	for level_key: Variant in enabled:
-		var level: Dictionary = get_level(level_key)
-		if int(level.get("max_stars", 0)) <= 0:
-			return level_key
-	return enabled[0] if not enabled.is_empty() else null
+	return null
 
 
 func get_store_item(item_path: Array) -> Dictionary:
