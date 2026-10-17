@@ -178,17 +178,11 @@ func level_lose(attempt_id: String, score: int, condition_facts: Dictionary) -> 
 		"title": "INTÉNTALO DE NUEVO",
 		"actions": [
 			{"id": "retry", "label": "REPETIR"},
-			{"id": "revive", "label": "VER VIDEO · UNA VIDA EXTRA"},
+			{"id": "revive", "label": "VER VIDEO · CONTINUAR"},
 			{"id": "home", "label": "INICIO"},
 		],
 	}
 	TtpGuiApi.complete_level(attempt_id, score, condition_facts, presentation)
-
-
-func revive_level(_level: Dictionary) -> void:
-	if _current_level_node != null and is_instance_valid(_current_level_node) and _current_level_node.has_method("revive"):
-		_current_level_node.call("revive")
-	_show_game({"level_key": _current_level_key, "revived": true})
 
 
 func duplicate_won_coins(_next_level_data: Dictionary, balance: int) -> void:
@@ -410,7 +404,6 @@ func _connect_api() -> void:
 	TtpGuiApi.item_purchased.connect(unblock_item_game)
 	TtpGuiApi.sfx_setting_changed.connect(update_sfx_game_configuration)
 	TtpGuiApi.music_setting_changed.connect(update_music_game_configuration)
-	TtpGuiApi.revive_reward_claimed.connect(revive_level)
 	TtpGuiApi.reward_doubling_claimed.connect(duplicate_won_coins)
 	TtpGuiApi.level_selection_requested.connect(_on_host_level_selection_requested)
 	TtpGuiApi.terminal_action_requested.connect(_on_host_terminal_action_requested)
@@ -868,7 +861,13 @@ func _show_reward_wait(message: String, is_win: bool, attempt_id: String, action
 		_present_terminal_result(updated_payload)
 	else:
 		_demo_action_claims["%s:%s" % [attempt_id, str(action_id)]] = true
-		TtpGuiApi.revive_after_reward(attempt_id)
+		var resume_result: MetaPlayResult = TtpGuiApi.resume_level_attempt(attempt_id)
+		if resume_result.status != MetaPlayResult.Status.COMPLETED:
+			_on_operation_rejected(resume_result.message)
+			return
+		if _current_level_node != null and is_instance_valid(_current_level_node) and _current_level_node.has_method("revive"):
+			_current_level_node.call("revive")
+		_show_game({"level_key": _current_level_key, "resumed": true})
 
 
 func _show_pause() -> void:
