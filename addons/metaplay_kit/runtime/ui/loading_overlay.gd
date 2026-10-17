@@ -2,6 +2,11 @@ class_name LoadingOverlay
 extends Control
 
 var progress_bar: ProgressBar = null
+var _ui_presentation_config: MetaPlayUIConfig = MetaPlayUIConfig.new()
+
+
+func _init() -> void:
+	_ui_presentation_config = TtpGuiApi._get_ui_presentation_config_for_component()
 
 
 func _ready() -> void:

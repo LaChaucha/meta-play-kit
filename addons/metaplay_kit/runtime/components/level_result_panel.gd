@@ -7,6 +7,11 @@ const UI: GDScript = preload("res://addons/metaplay_kit/runtime/ui/ui_factory.gd
 const StarRatingScript: GDScript = preload("res://addons/metaplay_kit/runtime/components/star_rating.gd")
 
 var _attempt_id: String = ""
+var _ui_presentation_config: MetaPlayUIConfig = MetaPlayUIConfig.new()
+
+
+func _init() -> void:
+	_ui_presentation_config = TtpGuiApi._get_ui_presentation_config_for_component()
 
 
 func present_result(result: Dictionary) -> void:

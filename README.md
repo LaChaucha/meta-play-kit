@@ -15,6 +15,7 @@ Open the repository root's `project.godot` in Godot 4.7 and run the main scene. 
 | `addons/metaplay_kit/runtime/model/` | Progression, wallet, settings, and store rules. |
 | `addons/metaplay_kit/runtime/systems/` | Asynchronous resource loading. |
 | `addons/metaplay_kit/runtime/components/`, `ui/` | Reusable UI controls and loading presentation. |
+| `addons/metaplay_kit/runtime/ui/meta_play_ui_config.gd` | Typed, versioned presentation profile for reusable kit UI components. |
 | `addons/metaplay_kit/runtime/platform/` | Optional platform purchase adapter and desktop mock. |
 | `addons/metaplay_kit/assets/` | Reusable theme and UI art. |
 | `PRODUCT.md` | Product direction, responsibility boundaries, and production readiness gates. |
@@ -34,6 +35,20 @@ A consuming game needs `addons/metaplay_kit/`, its own game content, and the aut
 ## Public API
 
 `TtpGuiApi` is the host game's facade. Use configuration methods before starting a session, action methods to request changes, read methods for UI projections, and signals to react to results. The facade returns deep copies of catalog, settings, and level data so callers do not mutate kit state through query results. The model and resource loader are implementation details and are not exposed as public properties.
+
+### Configure reusable kit UI
+
+The host may optionally supply a `MetaPlayUIConfig` resource once, before creating any MetaPlayKit UI components:
+
+```gdscript
+var ui_profile: MetaPlayUIConfig = load("res://config/meta_play_ui.tres") as MetaPlayUIConfig
+TtpGuiApi.configure_ui_presentation(ui_profile)
+
+# Create kit UI components only after configuration.
+var campaign_panel: LevelCampaignPanel = LevelCampaignPanel.new()
+```
+
+Without a resource, the kit uses its internal defaults. `configure_ui_presentation(null)` restores those defaults before UI construction. Components snapshot the profile when initialized; the first component query locks configuration for the rest of the session, and later configuration attempts emit a warning and are ignored. The kit copies the supplied resource and returns isolated copies from `get_ui_presentation_config()`, so it never mutates the host's resource or exposes its stored instance. Unsupported `schema_version` values emit `push_warning` naming that field and fall back to the supported default. Future profile fields follow the same field-by-field fallback policy. The initial profile establishes the typed, versioned contract; visual, text, asset, and section fields are added by their respective stories in epic #11.
 
 ### Configure a session
 
@@ -77,6 +92,7 @@ A level catalog entry contains static data such as `name` and `scene_path`. Conf
 
 | Purpose | Public methods |
 | --- | --- |
+| Configure presentation | `configure_ui_presentation`, `get_ui_presentation_config` |
 | Configure session data | `configure_levels`, `configure_level_result_rules`, `configure_campaign_projection`, `configure_settings`, `configure_items`, `configure_currency_products`, `configure_currency_rewards`, `set_currency_balance` |
 | Load and progress | `request_initial_level_load(key)`, `request_level_load(key) -> bool` (compatibility), `request_level_load_result(key) -> MetaPlayResult`, `cancel_level_load(operation_id)`, `begin_level_attempt(key) -> MetaPlayResult`, `complete_level(attempt_id, score, condition_facts, presentation) -> MetaPlayResult`, `retry_level(key) -> MetaPlayResult`, `request_next_level_load(key) -> MetaPlayResult` |
 | Store and wallet | `purchase_item(path) -> MetaPlayResult`, `equip_item(path) -> MetaPlayResult`, `credit_currency_product(product_key) -> MetaPlayResult`, `begin_currency_purchase(product_key) -> MetaPlayResult`, `mark_currency_purchase_pending(operation_id, purchase) -> MetaPlayResult`, `complete_currency_purchase(operation_id, product_key, purchase) -> MetaPlayResult`, `apply_verified_currency_purchase(operation_id) -> MetaPlayResult`, `fail_currency_purchase(operation_id, provider_code) -> MetaPlayResult`, `cancel_currency_purchase(operation_id) -> MetaPlayResult`, `restore_purchase_records(purchases) -> MetaPlayResult`, `apply_restored_currency_purchase(transaction_id) -> MetaPlayResult` |

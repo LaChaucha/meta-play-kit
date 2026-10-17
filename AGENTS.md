@@ -50,6 +50,7 @@ No crees commits ni hagas push sin autorización explícita del usuario.
 | `addons/metaplay_kit/runtime/systems/resource_batch.gd` | Carga asíncrona de recursos. |
 | `addons/metaplay_kit/runtime/components/` | Componentes de interfaz reutilizables. |
 | `addons/metaplay_kit/runtime/ui/` | Fábrica UI y overlay de carga. |
+| `addons/metaplay_kit/runtime/ui/meta_play_ui_config.gd` | Perfil tipado y versionado de presentación para componentes reutilizables; se registra antes de instanciar la UI. |
 | `addons/metaplay_kit/runtime/platform/iap_adapter.gd` | Frontera opcional de pagos y simulación de escritorio. |
 | `addons/metaplay_kit/runtime/platform/purchase_provider_adapter.gd` | Contrato neutral de proveedores de compras. |
 | `addons/metaplay_kit/runtime/platform/google_play_purchase_provider.gd` | Adaptador opcional Google Play, verificaci?n local de firma y consulta de compras restauradas. |
@@ -68,6 +69,8 @@ El orden en `MetaPlayDemoStage._ready()` configura el consumidor antes de inicia
 2. Conecta señales de `TtpGuiApi`, el modelo, la carga y el adaptador IAP.
 3. Registra el catálogo estático, las reglas de resultados por nivel, la proyección de campaña definida por el anfitrión, y los datos de tienda/configuración.
 4. Muestra el overlay y llama `TtpGuiApi.request_initial_level_load("level1")` con destino explícito.
+
+Un anfitrión que suministre `MetaPlayUIConfig` debe llamar `TtpGuiApi.configure_ui_presentation(profile)` antes de crear componentes reutilizables del kit. El primer componente bloquea la configuración para la sesión; las llamadas posteriores emiten advertencia y se ignoran. Los componentes capturan una copia al inicializarse. El kit conserva un perfil interno predeterminado y nunca modifica el recurso entregado por el anfitrión. Los valores incompatibles deben advertir por campo y usar el default correspondiente.
 
 El primer nivel se carga e instancia, pero el primer arranque termina en inicio; no se entra directamente a la partida. La política de inicio y selección pertenece al anfitrión. Los seis niveles de demostración apuntan a `level_stub.tscn`, con claves y progreso distintos.
 
@@ -110,6 +113,8 @@ El nivel de prueba no implementa gameplay real; sus botones simulan callbacks de
 ## Contrato de señales
 
 `TtpGuiApi` es el punto de entrada para consumidores. Las cargas exponen un `operation_id` monotónico en inicio, progreso y resultado terminal; las solicitudes rechazadas no emiten ciclo de vida, y cada aceptación termina exactamente una vez. El anfitrión autoriza la campaña, elige destinos y aplica/deduplica las acciones terminales recibidas por señal. `level_selection_requested` y `terminal_action_requested` son intenciones para el anfitrión, no órdenes de navegación ni premios aplicados por el kit.
+
+El perfil UI se configura con `configure_ui_presentation()` y se consulta con `get_ui_presentation_config()`. Esta configuración afecta solo componentes reutilizables del kit; las pantallas y controles propios siguen bajo control del anfitrión.
 
 Los intentos de gameplay usan IDs distintos a las cargas. Los resultados identicos son idempotentes y los conflictos se rechazan. El snapshot version 4 incluye progreso, saldo, ajustes, inventario, recompensas base, ledger local de transacciones y estado serializable de features; excluye catalogo, reglas, presentacion y proyeccion de campana. El anfitrion configura estos datos antes de restaurar. Se migra solo la version 3 inmediatamente anterior; el anfitrion conserva el IO de guardado.
 

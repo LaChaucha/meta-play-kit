@@ -6,6 +6,11 @@ signal item_pressed(item_key: Variant)
 var items_on_sell: Array[StoreItemButton] = []
 var items_not_on_sell: Array[StoreItemButton] = []
 var _list: VBoxContainer = null
+var _ui_presentation_config: MetaPlayUIConfig = MetaPlayUIConfig.new()
+
+
+func _init() -> void:
+	_ui_presentation_config = TtpGuiApi._get_ui_presentation_config_for_component()
 
 
 func _ready() -> void:
