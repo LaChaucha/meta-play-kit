@@ -401,9 +401,9 @@ func _build_game_screen() -> VBoxContainer:
 
 
 func _connect_api() -> void:
-	TtpGuiApi.navigation_requested.connect(_on_screen_requested)
 	TtpGuiApi.level_load_started.connect(_on_loading_started)
 	TtpGuiApi.level_load_result.connect(_on_loading_result)
+	TtpGuiApi.level_attempt_completed.connect(_on_level_attempt_completed)
 	TtpGuiApi.currency_balance_changed.connect(_update_coins)
 	TtpGuiApi.action_rejected.connect(_on_operation_rejected)
 	TtpGuiApi.item_equipped.connect(update_item_game_loaded)
@@ -800,12 +800,10 @@ func _simulate_lose() -> void:
 		level_lose(_current_attempt_id, 450, {"goal_reached": false})
 
 
-func _show_win(payload: Dictionary) -> void:
-	_present_terminal_result(payload)
-
-
-func _show_lose(payload: Dictionary) -> void:
-	_present_terminal_result(payload)
+func _on_level_attempt_completed(attempt_id: String, result: Dictionary) -> void:
+	if attempt_id != _current_attempt_id:
+		return
+	_present_terminal_result(result)
 
 
 func _present_terminal_result(payload: Dictionary) -> void:
@@ -890,7 +888,7 @@ func _resume_game() -> void:
 
 func _pause_to_home() -> void:
 	get_tree().paused = false
-	TtpGuiApi.request_home_screen()
+	show_home()
 
 
 func _begin_dialog(title_text: String) -> void:
@@ -915,27 +913,6 @@ func _clear_container(container: Node) -> void:
 	for child: Node in container.get_children():
 		container.remove_child(child)
 		child.queue_free()
-
-
-func _on_screen_requested(screen_name: String, payload: Dictionary) -> void:
-	match screen_name:
-		"home":
-			show_home()
-		"game":
-			if not _initial_boot:
-				_show_game(payload)
-		"levels":
-			_show_levels()
-		"store":
-			_show_store()
-		"config":
-			_show_config()
-		"settings":
-			_show_config()
-		"win":
-			_show_win(payload)
-		"lose":
-			_show_lose(payload)
 
 
 func _on_loading_started(operation_id: int, level_data: Dictionary) -> void:

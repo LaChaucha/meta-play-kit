@@ -30,7 +30,7 @@ func test_unknown_attempt_result_is_rejected_without_mutating_progress() -> void
 	assert_eq(result.code, &"attempt.not_found")
 	assert_eq(api.call("get_currency_balance"), 100)
 	assert_eq(api.call("get_level_progress", "first"), {"completed": false, "best_score": 0, "best_stars": 0})
-	assert_signal_emit_count(api, "navigation_requested", 0)
+	assert_signal_emit_count(api, "level_attempt_completed", 0)
 	assert_signal_emit_count(api, "action_rejected", 1)
 
 
@@ -56,7 +56,10 @@ func test_result_rules_calculate_stars_record_progress_and_never_unlock_next_lev
 	assert_true(bool(duplicate.context.get("duplicate", false)))
 	assert_eq(api.call("get_enabled_level_keys"), ["first"])
 	assert_eq(api.call("get_next_available_level"), null)
-	assert_signal_emit_count(api, "navigation_requested", 1)
+	assert_signal_emit_count(api, "level_attempt_completed", 1)
+	var completion_event: Array = get_signal_args(api, "level_attempt_completed")
+	assert_eq(completion_event[0], attempt_id)
+	assert_eq((completion_event[1] as Dictionary).get("outcome"), "won")
 	assert_signal_emit_count(api, "currency_balance_changed", 1)
 
 
@@ -67,14 +70,14 @@ func test_failed_conditions_produce_zero_star_loss_and_no_completion_reward() ->
 	var started: MetaPlayResult = api.call("begin_level_attempt", "first") as MetaPlayResult
 	var result: MetaPlayResult = api.call("complete_level", str(started.context.get("attempt_id", "")), 800, {"goal_reached": false}) as MetaPlayResult
 	var progress: Dictionary = api.call("get_level_progress", "first") as Dictionary
-	var navigation: Array = get_signal_args(api, "navigation_requested")
 	assert_eq(result.status, MetaPlayResult.Status.COMPLETED)
 	assert_eq(result.context.get("outcome"), "lost")
 	assert_eq(result.context.get("stars"), 0)
 	assert_false(bool(progress.get("completed", true)))
 	assert_eq(progress.get("best_score"), 800)
 	assert_eq(api.call("get_currency_balance"), 100)
-	assert_eq(navigation[0], "lose")
+	var completion_event: Array = get_signal_args(api, "level_attempt_completed")
+	assert_eq((completion_event[1] as Dictionary).get("outcome"), "lost")
 
 
 func test_legacy_loss_command_forces_loss_without_required_conditions() -> void:
@@ -102,6 +105,29 @@ func test_terminal_actions_only_emit_host_requests_and_do_not_apply_rewards() ->
 	assert_eq(api.call("get_currency_balance"), 100)
 	assert_signal_emit_count(api, "terminal_action_requested", 1)
 	assert_eq(get_signal_args(api, "terminal_action_requested", 0), [attempt_id, &"double"])
+
+
+func test_public_api_does_not_expose_screen_navigation_commands_or_signals() -> void:
+	assert_false(api.has_signal("navigation_requested"))
+	assert_false(api.has_signal("screen_requested"))
+	assert_false(api.has_method("request_home_screen"))
+	assert_false(api.has_method("request_level_selection_screen"))
+	assert_false(api.has_method("request_store_screen"))
+	assert_false(api.has_method("request_settings_screen"))
+	assert_false(api.has_method("set_optional_section_available"))
+	assert_false(api.has_method("is_optional_section_available"))
+
+
+func test_revive_reports_domain_result_without_emitting_a_screen_destination() -> void:
+	watch_signals(api)
+	var started: MetaPlayResult = api.call("begin_level_attempt", "first") as MetaPlayResult
+	var attempt_id: String = str(started.context.get("attempt_id", ""))
+	api.call("complete_level", attempt_id, 250, {"goal_reached": false})
+	var result: MetaPlayResult = api.call("revive_after_reward", attempt_id) as MetaPlayResult
+	assert_eq(result.status, MetaPlayResult.Status.COMPLETED)
+	assert_true(bool(result.context.get("revived", false)))
+	assert_signal_emit_count(api, "revive_reward_claimed", 1)
+	assert_signal_emit_count(api, "level_attempt_completed", 1)
 
 
 func test_campaign_selection_emits_host_intent_without_loading_and_generic_load_ignores_availability() -> void:

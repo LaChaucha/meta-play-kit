@@ -56,19 +56,7 @@ Without a resource, the kit uses its internal defaults. `configure_ui_presentati
 
 The nested `MetaPlayUITextConfig` resource optionally overrides only text generated internally by kit components. It covers campaign states and score format, result titles and score format, the default continue label, and generic/equipped/owned store item labels. Empty values use English defaults; score formats must include `{score}`, and campaign score formats must also include `{stars}`. Labels, titles, descriptions, and prices supplied by the host remain authoritative. The host selects the active language and supplies already-resolved strings before it creates kit components. MetaPlayKit does not select a locale, load the host's translation catalog, or support changing language after UI construction in this version. A host should provide a visible label for each result action; actions without labels are omitted.
 
-The same central profile contains optional section availability for `levels`, `store`, and `settings`; all are enabled by default. These values may be initialized in the profile and changed at runtime through `set_optional_section_available()`, including after kit components have initialized. Disabling a section rejects new MetaPlayKit navigation requests with a `MetaPlayResult` code of `ui.section_unavailable` and emits the existing `action_rejected` signal. The legacy `config` screen request follows the `settings` policy. Previously emitted requests are not revoked. This policy applies only to navigation requests made through MetaPlayKit; it does not control host-owned screens, routes, or direct domain actions such as selecting a level, loading a resource, or purchasing an item.
-
-```gdscript
-var profile: MetaPlayUIConfig = MetaPlayUIConfig.new()
-profile.store_available = false # Initial policy, before component construction.
-TtpGuiApi.configure_ui_presentation(profile)
-
-# Availability remains mutable after UI components have been initialized.
-var result: MetaPlayResult = TtpGuiApi.set_optional_section_available(
-	TtpGuiApi.OptionalSection.STORE,
-	true
-)
-```
+The host owns screen composition and navigation. MetaPlayKit reports domain outcomes and reusable-component intents; it does not expose screen destinations or commands. The sample consumer routes these signals through its own stage. This keeps each game's navigation, screen availability, and presentation policy in the host.
 
 For supported graphic slots, `MetaPlayUIConfig` accepts typed `Texture2D` overrides from anywhere in the host project's `res://` namespace. The current slots are `active_star_texture`, `inactive_star_texture`, and `loading_background_texture`; a null value keeps the corresponding kit asset. For individual store products, provide an optional `icon_path` using a `res://` path in the item definition. The button loads it as a `Texture2D`; missing paths and other resource types warn and leave the item without an icon. These strings remain serializable in session inventory snapshots. The profile does not accept arbitrary slots or modify UI assembled by the host. For example:
 
@@ -124,13 +112,13 @@ A level catalog entry contains static data such as `name` and `scene_path`. Conf
 
 | Purpose | Public methods |
 | --- | --- |
-| Configure presentation | `configure_ui_presentation`, `get_ui_presentation_config`, `set_optional_section_available(section, available) -> MetaPlayResult`, `is_optional_section_available(section)` |
+| Configure presentation | `configure_ui_presentation`, `get_ui_presentation_config` |
 | Configure session data | `configure_levels`, `configure_level_result_rules`, `configure_campaign_projection`, `configure_settings`, `configure_items`, `configure_currency_products`, `configure_currency_rewards`, `set_currency_balance` |
 | Load and progress | `request_initial_level_load(key)`, `request_level_load(key) -> bool` (compatibility), `request_level_load_result(key) -> MetaPlayResult`, `cancel_level_load(operation_id)`, `begin_level_attempt(key) -> MetaPlayResult`, `complete_level(attempt_id, score, condition_facts, presentation) -> MetaPlayResult`, `retry_level(key) -> MetaPlayResult`, `request_next_level_load(key) -> MetaPlayResult` |
 | Store and wallet | `purchase_item(path) -> MetaPlayResult`, `equip_item(path) -> MetaPlayResult`, `credit_currency_product(product_key) -> MetaPlayResult`, `begin_currency_purchase(product_key) -> MetaPlayResult`, `mark_currency_purchase_pending(operation_id, purchase) -> MetaPlayResult`, `complete_currency_purchase(operation_id, product_key, purchase) -> MetaPlayResult`, `apply_verified_currency_purchase(operation_id) -> MetaPlayResult`, `fail_currency_purchase(operation_id, provider_code) -> MetaPlayResult`, `cancel_currency_purchase(operation_id) -> MetaPlayResult`, `restore_purchase_records(purchases) -> MetaPlayResult`, `apply_restored_currency_purchase(transaction_id) -> MetaPlayResult` |
 | Settings and rewards | `toggle_sfx`, `toggle_music`, `configure_completion_rewards(rewards, cooldown_seconds)`, `request_terminal_action(attempt_id, action_id)` |
 | Host-owned state | `set_session_feature_state(key, state) -> MetaPlayResult`, `get_session_feature_state(key)`, `export_session_state() -> MetaPlayResult`, `restore_session_state(snapshot) -> MetaPlayResult` |
-| Navigation | `request_home_screen`, `request_level_selection_screen`, `request_store_screen`, `request_settings_screen` (return `MetaPlayResult`; optional destinations may be rejected), `start_or_resume_game(level_key) -> MetaPlayResult`, `select_level(key) -> MetaPlayResult` (emits host intent; does not load) |
+| Host-owned navigation | No screen routing commands; `start_or_resume_game(level_key) -> MetaPlayResult` and `select_level(key) -> MetaPlayResult` report gameplay/selection intents for host handling |
 | Read level/session state | `get_level(key)`, `get_levels`, `get_level_progress(key)`, `get_all_level_progress`, `get_campaign_projection` |
 | Read store/settings state | `get_settings`, `get_items`, `get_item(path)`, `get_currency_products`, `get_currency_balance`, `get_item_type_values` |
 | Loading/presentation helpers | `get_loaded_resource(path)`, `is_loading`, `format_number(value)` |
@@ -262,19 +250,19 @@ func _on_level_load_result(result: MetaPlayResult) -> void:
             var packed_scene: PackedScene = resource as PackedScene
             if packed_scene == null:
                 _pending_operation_id = 0
-                TtpGuiApi.request_home_screen()
+                # Choose the host game's fallback screen here.
                 return
             var level: Node = packed_scene.instantiate() as Node
             if level == null:
                 _pending_operation_id = 0
-                TtpGuiApi.request_home_screen()
+                # Choose the host game's fallback screen here.
                 return
             if level.has_method("configure"):
                 var configured: Variant = level.call("configure", level_data.get("key"), self)
                 if configured is bool and not configured:
                     level.free()
                     _pending_operation_id = 0
-                    TtpGuiApi.request_home_screen()
+                    # Choose the host game's fallback screen here.
                     return
             add_child(level)
             if level.has_method("start_level"):
@@ -285,7 +273,7 @@ func _on_level_load_result(result: MetaPlayResult) -> void:
                     remove_child(level)
                     level.queue_free()
                     _pending_operation_id = 0
-                    TtpGuiApi.request_home_screen()
+                    # Choose the host game's fallback screen here.
                     return
             if _current_level != null and is_instance_valid(_current_level):
                 remove_child(_current_level)
@@ -296,13 +284,13 @@ func _on_level_load_result(result: MetaPlayResult) -> void:
             # Present gameplay in the host UI.
         MetaPlayResult.Status.FAILED, MetaPlayResult.Status.CANCELLED:
             _pending_operation_id = 0
-            TtpGuiApi.request_home_screen()
+            # Choose the host game's fallback screen here.
 
 func _on_action_rejected(message: String) -> void:
     push_warning(message)
 ```
 
-`cancel_level_load(operation_id)` returns `true` only when it closes that active operation; wrong, terminal, or stale IDs return `false` and emit no second terminal event. Godot may continue the threaded resource work, but the kit invalidates its callbacks and discards its result. The methods `configure(key, host)`, `start_level()`, `stop_level()`, and `revive()` are conventions demonstrated by `demo/scripts/level.gd`, not requirements imposed on host scenes. In the sample, returning `false` from `configure()` or `start_level()` rejects the candidate; legacy methods returning no value are treated as successful. Connect `loading_progress_changed(operation_id, progress)` to the host's progress UI if desired, and ignore progress whose ID is not the host's pending operation. A failed resource load emits `level_load_failed(operation_id, level_data, message)`, then `action_rejected(message)`, and requests the home screen.
+`cancel_level_load(operation_id)` returns `true` only when it closes that active operation; wrong, terminal, or stale IDs return `false` and emit no second terminal event. Godot may continue the threaded resource work, but the kit invalidates its callbacks and discards its result. The methods `configure(key, host)`, `start_level()`, `stop_level()`, and `revive()` are conventions demonstrated by `demo/scripts/level.gd`, not requirements imposed on host scenes. In the sample, returning `false` from `configure()` or `start_level()` rejects the candidate; legacy methods returning no value are treated as successful. Connect `loading_progress_changed(operation_id, progress)` to the host's progress UI if desired, and ignore progress whose ID is not the host's pending operation. A failed resource load emits `level_load_failed(operation_id, level_data, message)`, then `action_rejected(message)`; the host decides how to recover or which screen to show.
 
 ### Report gameplay results
 
@@ -327,7 +315,6 @@ The host reports score and facts; MetaPlayKit evaluates its configured condition
 | `level_load_failed(operation_id, level_data, message)` | Legacy terminal failure event, emitted alongside `level_load_result`. |
 | `level_load_cancelled(operation_id, level_data)` | Legacy cancellation event, emitted alongside `level_load_result` after explicit cancellation or API shutdown. |
 | `level_load_exit_animation_completed(operation_id)` | The demo-compatible exit transition finished after successful resource loading. |
-| `navigation_requested(screen_name, payload)` | A screen transition is requested (`home`, `game`, `levels`, `store`, `settings`, `win`, or `lose`). |
 | `level_attempt_started(attempt_id, level_key)` / `level_attempt_completed(attempt_id, result)` | Gameplay attempt identity and its idempotently recorded terminal result. |
 | `reward_claim_completed(result)` | A configured base completion reward was credited. Optional terminal actions do not grant rewards in the kit. |
 | `session_restored(schema_version)` | One notification after the entire supported snapshot has been validated and applied. Query the facade for refreshed state after receiving it. |
