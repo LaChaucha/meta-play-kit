@@ -16,7 +16,14 @@ func present_campaign(entries: Array, progress_by_level: Dictionary, level_catal
 	for child: Node in get_children():
 		remove_child(child)
 		child.queue_free()
-	add_theme_constant_override("separation", 10)
+	add_theme_constant_override("separation", _ui_presentation_config.section_spacing)
+	var campaign_grid: GridContainer = GridContainer.new()
+	campaign_grid.name = "CampaignGrid"
+	campaign_grid.columns = _ui_presentation_config.campaign_columns
+	campaign_grid.add_theme_constant_override("h_separation", _ui_presentation_config.component_spacing)
+	campaign_grid.add_theme_constant_override("v_separation", _ui_presentation_config.component_spacing)
+	campaign_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	add_child(campaign_grid)
 	for raw_entry: Variant in entries:
 		if not raw_entry is Dictionary:
 			continue
@@ -28,12 +35,14 @@ func present_campaign(entries: Array, progress_by_level: Dictionary, level_catal
 		var state_label: String = "Completed" if completed else ("Available" if bool(entry.get("available", false)) else "Locked")
 		var row: HBoxContainer = HBoxContainer.new()
 		row.name = "Level_%s" % str(level_key).to_pascal_case()
-		row.add_theme_constant_override("separation", 10)
-		add_child(row)
-		var button: Button = UI.button("%s  ·  %s" % [str(level.get("name", level_key)), state_label], func() -> void: level_selection_requested.emit(level_key), Vector2(360.0, 54.0))
+		row.add_theme_constant_override("separation", _ui_presentation_config.component_spacing)
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		campaign_grid.add_child(row)
+		var button: Button = UI.button("%s  ·  %s" % [str(level.get("name", level_key)), state_label], func() -> void: level_selection_requested.emit(level_key), _ui_presentation_config.campaign_button_size)
 		button.disabled = not bool(entry.get("selectable", false))
 		button.name = "Select_%s" % str(level_key).to_pascal_case()
+		button.add_theme_color_override("font_color", _ui_presentation_config.primary_color)
 		row.add_child(button)
-		var score_label: Label = UI.label("★ %d   Score %d" % [int(progress.get("best_stars", 0)), int(progress.get("best_score", 0))], 18)
+		var score_label: Label = UI.label("★ %d   Score %d" % [int(progress.get("best_stars", 0)), int(progress.get("best_score", 0))], _ui_presentation_config.body_font_size, _ui_presentation_config.muted_text_color)
 		score_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(score_label)

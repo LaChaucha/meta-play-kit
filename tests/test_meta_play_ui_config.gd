@@ -39,6 +39,19 @@ func test_unsupported_schema_version_warns_and_falls_back_to_the_supported_field
 	assert_eq(host_profile.schema_version, 99)
 
 
+func test_component_style_fields_are_typed_and_invalid_values_fall_back_independently() -> void:
+	var host_profile: MetaPlayUIConfig = MetaPlayUIConfig.new()
+	host_profile.body_font_size = 100
+	host_profile.campaign_columns = 2
+	host_profile.screen_horizontal_margin = 72
+	api.call("configure_ui_presentation", host_profile)
+	var normalized_profile: MetaPlayUIConfig = api.call("get_ui_presentation_config") as MetaPlayUIConfig
+	assert_eq(normalized_profile.body_font_size, 18)
+	assert_eq(normalized_profile.campaign_columns, 2)
+	assert_eq(normalized_profile.screen_horizontal_margin, 72)
+	assert_eq(host_profile.body_font_size, 100)
+
+
 func test_first_component_query_locks_the_profile_for_v1() -> void:
 	api.call("_get_ui_presentation_config_for_component")
 	var later_profile: MetaPlayUIConfig = MetaPlayUIConfig.new()

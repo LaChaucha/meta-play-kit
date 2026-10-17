@@ -13,12 +13,12 @@ func _init() -> void:
 
 
 func _ready() -> void:
-	add_theme_constant_override("separation", 6)
+	add_theme_constant_override("separation", _ui_presentation_config.star_spacing)
 	if _stars.is_empty():
 		for index: int in range(3):
 			var star: TextureRect = TextureRect.new()
 			star.name = "Star%d" % (index + 1)
-			star.custom_minimum_size = Vector2(48.0, 48.0)
+			star.custom_minimum_size = Vector2.ONE * _ui_presentation_config.star_size
 			star.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 			star.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 			star.mouse_filter = Control.MOUSE_FILTER_IGNORE

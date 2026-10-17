@@ -15,7 +15,7 @@ func _init() -> void:
 
 
 func _ready() -> void:
-	custom_minimum_size = Vector2(0.0, 76.0)
+	custom_minimum_size = Vector2(0.0, _ui_presentation_config.store_item_height)
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	pressed.connect(_on_pressed)

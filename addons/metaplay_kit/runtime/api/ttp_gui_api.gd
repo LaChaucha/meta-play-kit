@@ -154,6 +154,7 @@ func configure_ui_presentation(profile: MetaPlayUIConfig = null) -> void:
 			% MetaPlayUIConfig.CURRENT_SCHEMA_VERSION
 		)
 		normalized_profile.schema_version = MetaPlayUIConfig.CURRENT_SCHEMA_VERSION
+	normalized_profile.normalize()
 	_ui_presentation_config = normalized_profile
 
 

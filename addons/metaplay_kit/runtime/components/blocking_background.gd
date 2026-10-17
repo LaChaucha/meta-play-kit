@@ -13,7 +13,7 @@ func _init() -> void:
 
 
 func _ready() -> void:
-	color = Color(0.05, 0.02, 0.08, 0.72)
+	color = _ui_presentation_config.modal_overlay_color
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	gui_input.connect(_on_gui_input)
 

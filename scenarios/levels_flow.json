@@ -9,10 +9,10 @@
 	{"type": "mouse_button", "button_index": 1, "position": {"x": 316, "y": 654}, "pressed": true},
 	{"type": "mouse_button", "button_index": 1, "position": {"x": 316, "y": 654}, "pressed": false},
 	{"type": "wait_until", "node_path": "ModalOverlay", "property": "visible", "expected": true},
-	{"type": "assert", "assertion": "node_exists", "node_path": "ModalOverlay/DialogCenter/Dialog/DialogBody/CampaignHistory/Level_Level1/Select_Level1"},
+	{"type": "assert", "assertion": "node_exists", "node_path": "ModalOverlay/DialogCenter/Dialog/DialogBody/CampaignHistory/CampaignGrid/Level_Level1/Select_Level1"},
 	{"type": "ui_report", "label": "level-selector", "node_path": "ModalOverlay/DialogCenter/Dialog", "fail_on": ["any"]},
-	{"type": "mouse_button", "button_index": 1, "position": {"x": 550, "y": 210}, "pressed": true},
-	{"type": "mouse_button", "button_index": 1, "position": {"x": 550, "y": 210}, "pressed": false},
+	{"type": "mouse_button", "button_index": 1, "position": {"x": 550, "y": 205}, "pressed": true},
+	{"type": "mouse_button", "button_index": 1, "position": {"x": 550, "y": 205}, "pressed": false},
 	{"type": "wait_until", "node_path": "Background/ScreenFrame/ScreenStack/GameScreen", "property": "visible", "expected": true}
   ]
 }
