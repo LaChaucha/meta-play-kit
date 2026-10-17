@@ -79,7 +79,7 @@ A level catalog entry contains static data such as `name` and `scene_path`. Conf
 | --- | --- |
 | Configure session data | `configure_levels`, `configure_level_result_rules`, `configure_campaign_projection`, `configure_settings`, `configure_items`, `configure_currency_products`, `configure_currency_rewards`, `set_currency_balance` |
 | Load and progress | `request_initial_level_load(key)`, `request_level_load(key) -> bool` (compatibility), `request_level_load_result(key) -> MetaPlayResult`, `cancel_level_load(operation_id)`, `begin_level_attempt(key) -> MetaPlayResult`, `complete_level(attempt_id, score, condition_facts, presentation) -> MetaPlayResult`, `retry_level(key) -> MetaPlayResult`, `request_next_level_load(key) -> MetaPlayResult` |
-| Store and wallet | `purchase_item(path) -> MetaPlayResult`, `equip_item(path) -> MetaPlayResult`, `credit_currency_product(product_key) -> MetaPlayResult`, `begin_currency_purchase(product_key) -> MetaPlayResult`, `complete_currency_purchase(operation_id, confirmed_product_key) -> MetaPlayResult`, `fail_currency_purchase(operation_id) -> MetaPlayResult`, `cancel_currency_purchase(operation_id) -> MetaPlayResult` |
+| Store and wallet | `purchase_item(path) -> MetaPlayResult`, `equip_item(path) -> MetaPlayResult`, `credit_currency_product(product_key) -> MetaPlayResult`, `begin_currency_purchase(product_key) -> MetaPlayResult`, `mark_currency_purchase_pending(operation_id, purchase) -> MetaPlayResult`, `complete_currency_purchase(operation_id, product_key, purchase) -> MetaPlayResult`, `apply_verified_currency_purchase(operation_id) -> MetaPlayResult`, `fail_currency_purchase(operation_id, provider_code) -> MetaPlayResult`, `cancel_currency_purchase(operation_id) -> MetaPlayResult`, `restore_purchase_records(purchases) -> MetaPlayResult`, `apply_restored_currency_purchase(transaction_id) -> MetaPlayResult` |
 | Settings and rewards | `toggle_sfx`, `toggle_music`, `configure_completion_rewards(rewards, cooldown_seconds)`, `request_terminal_action(attempt_id, action_id)` |
 | Host-owned state | `set_session_feature_state(key, state) -> MetaPlayResult`, `get_session_feature_state(key)`, `export_session_state() -> MetaPlayResult`, `restore_session_state(snapshot) -> MetaPlayResult` |
 | Navigation | `request_home_screen`, `request_level_selection_screen`, `request_store_screen`, `request_settings_screen`, `start_or_resume_game(level_key) -> MetaPlayResult`, `select_level(key) -> MetaPlayResult` (emits host intent; does not load) |
@@ -95,7 +95,7 @@ Base completion rewards remain a kit-owned wallet feature: configure them with `
 
 `configure_campaign_projection()` accepts an ordered array of `{key, available, selectable}` entries for the optional `LevelCampaignPanel`. `select_level(key)` validates that the host marked the entry selectable, then emits `level_selection_requested(key)`; it does not begin a load. The host handles the event and calls `request_level_load(key)` if its policy accepts the choice. The generic load API validates registered level data and load lifecycle only; it does not enforce campaign availability. `get_level_progress()` returns copied completion and best-result records, while campaign order and availability remain host-owned.
 
-`export_session_state()` returns a deep-copied snapshot at schema version 3. The snapshot contains level result records, wallet, settings, inventory, completion/reward ledger, and serializable feature state, but not the host's catalog, result rules, campaign projection, or terminal presentation. Configure the catalog/rules/campaign before restore. The host owns storage and calls `restore_session_state(snapshot)` explicitly. Restore validates the complete snapshot atomically and emits one `session_restored(schema_version)` signal after success. Only schema version 3 is accepted; snapshots from version 2 are unsupported and are not migrated. Local snapshots are not authoritative against a modified client; online games must validate rewards on their server.
+`export_session_state()` returns a deep-copied snapshot at schema version 4. The snapshot contains level result records, wallet, settings, inventory, completion/reward ledger, verified purchase transaction IDs, and serializable feature state, but not the host's catalog, result rules, campaign projection, or terminal presentation. Configure the catalog/rules/campaign before restore. The host owns storage and calls `restore_session_state(snapshot)` explicitly. Restore validates the complete snapshot atomically and emits one `session_restored(schema_version)` signal after success. Version 3 snapshots migrate to version 4 with an empty purchase ledger; version 2 and earlier remain unsupported. Local snapshots are not authoritative against a modified client; online games must validate rewards and transaction IDs on their server.
 
 ```gdscript
 var snapshot: Dictionary = {}
@@ -113,28 +113,55 @@ if restore_result.status == MetaPlayResult.Status.REJECTED:
 
 ### Typed operation results
 
-`MetaPlayResult` is the shared typed result contract for the gradual migration of facade commands. Its `status` is one of `ACCEPTED`, `COMPLETED`, `REJECTED`, `FAILED`, or `CANCELLED`; `code` is a stable `StringName` for rejected or failed outcomes; `operation_id` correlates asynchronous acceptance with its terminal result; and `context` carries structured details as a defensive deep copy. Accepted, successful, and cancelled outcomes have no error code. Synchronous results use operation ID `0`; accepted, failed, and cancelled asynchronous results require a positive ID. Create results with `MetaPlayResult.accepted()`, `completed()`, `rejected()`, `failed()`, and `cancelled()` so these invariants are checked. Progression and store commands plus terminal level-load events use this type; asynchronous purchase-provider operations will migrate in a follow-up story.
+`MetaPlayResult` is the shared typed result contract for facade commands. Its `status` is one of `ACCEPTED`, `COMPLETED`, `REJECTED`, `FAILED`, or `CANCELLED`; `code` is a stable `StringName` for rejected or failed outcomes; `operation_id` correlates asynchronous acceptance with its terminal result; and `context` carries structured details as a defensive deep copy. Accepted, successful, and cancelled outcomes have no error code. Synchronous results use operation ID `0`; accepted, failed, and cancelled asynchronous results require a positive ID. Create results with `MetaPlayResult.accepted()`, `completed()`, `rejected()`, `failed()`, and `cancelled()` so these invariants are checked. Progression, store commands, level loading and currency purchase operations use this type.
 
 Progression rejections also continue to emit the legacy `action_rejected` and `operation_rejected` message signals for existing consumers. New integrations should handle the returned result and avoid processing the same rejection again through a legacy signal. Store and wallet commands return `MetaPlayResult` as well: purchase/equip failures use stable codes such as `store.item_not_found`, `store.item_already_owned`, `store.item_not_owned`, `store.item_not_equippable`, and `wallet.insufficient_funds`; unknown currency products use `currency.product_not_found`. Rejected results include structured item/product context, and insufficient-funds context includes both required cost and current balance. Successful purchase/equip results include the updated item snapshot; successful currency credit includes the amount added and resulting balance. Store failures continue to emit legacy rejection messages, so integrations should consume the typed return and not handle the same failure again through `action_rejected`. Load consumers can migrate to `level_load_result(result: MetaPlayResult)`, emitted exactly once for each accepted operation with `COMPLETED`, `FAILED`, or `CANCELLED` status and the same operation ID. Its context contains `level_key`, a copied `level_data`, and `scene_path`; success also contains the exact loaded `resource`, while failure uses stable code `level.load_failed` and includes the loader's presentation-only `message`. Existing terminal signals remain available during migration; do not handle both the typed result and legacy terminal event for the same behavior.
 
+Purchase operations use stable codes including `purchase.in_progress`, `purchase.operation_stale`, `purchase.product_mismatch`, `purchase.not_verified`, `purchase.signature_invalid`, `purchase.receipt_invalid`, `purchase.verifier_not_configured`, `purchase.provider_unavailable`, and `purchase.transaction_conflict`. Provider-specific failure codes are included as context; user-facing messages are not stable contract values.
+
 ### Correlated currency purchases
 
-The facade arbitrates one currency purchase at a time. `begin_currency_purchase(product_key)` validates the configured product and returns `ACCEPTED` with a unique, increasing `operation_id`; a second in-flight request is rejected with `purchase.in_progress`. The host passes that ID to its provider adapter and must return the same ID to exactly one terminal method: `complete_currency_purchase`, `fail_currency_purchase`, or `cancel_currency_purchase`. Each accepted operation emits exactly one `currency_purchase_result(result)` with `COMPLETED`, `FAILED`, or `CANCELLED`. Unknown IDs and duplicate/late callbacks are rejected with `purchase.operation_stale`; a mismatched confirmed product fails with `purchase.product_mismatch`.
+The facade arbitrates one currency purchase at a time. `begin_currency_purchase(product_key)` validates the configured product and returns `ACCEPTED` with a unique, increasing `operation_id`; a second in-flight request is rejected with `purchase.in_progress`. The host passes that ID to its provider adapter. A verified purchase calls `complete_currency_purchase(operation_id, product_key, purchase_data)`; pending, failed and cancelled purchases use their respective methods. Each accepted operation emits exactly one terminal `currency_purchase_result(result)` with `COMPLETED`, `FAILED`, or `CANCELLED`; a pending result emits `currency_purchase_pending` and keeps the operation active. Unknown IDs and duplicate/late callbacks are rejected with `purchase.operation_stale`; a mismatched product fails with `purchase.product_mismatch`.
 
-Completion only reports the provider's confirmation and product key. It does **not** credit the wallet. After the host has verified the transaction according to its platform policy, it may call `credit_currency_product(product_key)` once. This separation prevents duplicate callbacks from automatically granting currency, but the host/provider integration remains responsible for transaction verification and durable idempotency. The included desktop adapter is a local simulation and does not verify receipts.
+Completion does **not** immediately credit the wallet. For a provider-verified result, the facade creates an operation-scoped grant that can be applied once with `apply_verified_currency_purchase(operation_id)`. The model records the provider transaction ID and returns a duplicate result without crediting twice. The transaction ledger is included in the host-owned session snapshot. `credit_currency_product()` remains available for non-store/manual flows and for the explicitly simulated demo adapter.
 
 ```gdscript
 var purchase: MetaPlayResult = TtpGuiApi.begin_currency_purchase("small_pack")
 if purchase.status == MetaPlayResult.Status.ACCEPTED:
     var operation_id: int = purchase.operation_id
-    # Pass operation_id through the provider adapter and its callbacks.
+    # Pass operation_id through PurchaseProviderAdapter.begin_purchase().
 
-func _on_provider_purchase_confirmed(operation_id: int, product_key: String) -> void:
-    var result: MetaPlayResult = TtpGuiApi.complete_currency_purchase(operation_id, product_key)
-    if result.status == MetaPlayResult.Status.COMPLETED:
-        # Apply only after the host/provider's verification policy succeeds.
-        TtpGuiApi.credit_currency_product(product_key)
+func _on_provider_purchase_succeeded(operation_id: int, purchase: Dictionary) -> void:
+    var result: MetaPlayResult = TtpGuiApi.complete_currency_purchase(
+        operation_id,
+        purchase.get("product_key"),
+        purchase,
+    )
+    if result.status == MetaPlayResult.Status.COMPLETED and not bool(result.context.get("simulated", false)):
+        var grant: MetaPlayResult = TtpGuiApi.apply_verified_currency_purchase(operation_id)
+        if grant.status == MetaPlayResult.Status.COMPLETED and not bool(grant.context.get("duplicate", false)):
+            play_provider.consume_purchase(purchase)
 ```
+
+#### Provider boundary and Google Play
+
+`PurchaseProviderAdapter` defines the provider-neutral signals and methods. A host can implement its own subclass and verification flow, or use `GooglePlayPurchaseProvider` for the optional `GodotPayments` Android singleton. The Google Play adapter verifies the signed purchase JSON with the app-specific Play Console public key, checks the signed product ID and purchase state, and exposes the purchase token as `transaction_id`. Configure the public key before starting purchases:
+
+```gdscript
+var play_provider: GooglePlayPurchaseProvider = GooglePlayPurchaseProvider.new()
+var key_result: MetaPlayResult = play_provider.configure_license_public_key(play_console_public_key)
+if key_result.status == MetaPlayResult.Status.COMPLETED:
+    add_child(play_provider)
+    play_provider.purchase_succeeded.connect(_on_provider_purchase_succeeded)
+    play_provider.purchase_pending.connect(_on_provider_purchase_pending)
+    play_provider.purchase_failed.connect(_on_provider_purchase_failed)
+```
+
+The host starts the kit operation, then passes its ID and the configured Play product ID to `begin_purchase()`. `IapAdapter` is the explicit desktop simulation: it emits `provider: "simulation"` and `verified: false`, and cannot be mistaken for a verified store result. Host-authored adapters may use a server verifier and emit the normalized provider result with their own provider ID.
+
+`restore_purchases()` requests the provider's owned-purchase query. The Google bridge calls `has_purchased(receipt, signature, sku)` for returned purchases and `finish_restore()` when that query is complete. Only locally signature-verified, purchased records are emitted. The host receives those records through `restore_purchase_records()` and decides how its product catalog maps them to durable entitlements. Consumable currency can be applied with `apply_restored_currency_purchase(transaction_id)`; the transaction ledger prevents the same token from granting twice. The Google adapter disables automatic consumption. The host calls `consume_purchase(purchase)` only after applying a consumable grant; non-consumable acknowledgement and subscription lifecycle remain host/backend policy.
+
+The Google adapter's local signature check establishes that the receipt was signed for the configured app key and matches the product/purchase state; it does not query Google's current purchase state and cannot detect later refunds or revocations. Google's current guidance recommends sending purchase tokens to a secure backend, verifying them through the Google Play Developer API, checking token uniqueness, and granting benefits only after verification ([purchase integration](https://developer.android.com/google/play/billing/integrate), [fraud and abuse guidance](https://developer.android.com/google/play/billing/security)). The kit keeps a host-provider seam for that stronger server-side flow. Local snapshot idempotency improves callback/restart behavior but is not tamper-proof or shared across devices.
 
 ### Explicit legacy events
 
@@ -258,6 +285,10 @@ The host reports score and facts; MetaPlayKit evaluates its configured condition
 | `session_restored(schema_version)` | One notification after the entire supported snapshot has been validated and applied. Query the facade for refreshed state after receiving it. |
 | `action_rejected(message)` | A requested action or load could not be completed. |
 | `currency_balance_changed(total)` / `store_catalog_changed()` | Wallet or item catalog changed. |
+| `currency_purchase_pending(operation_id, purchase)` | A verified provider reported an asynchronous pending purchase; the operation stays open and grants no currency. |
+| `currency_purchase_result(result)` | One terminal result per accepted purchase operation. |
+| `currency_purchase_applied(result)` | A verified, non-duplicate transaction was credited to the wallet. |
+| `currency_purchases_restored(purchases)` | The latest provider restore query returned verified purchase records for host-owned entitlement mapping. |
 | `play_requested()` / `level_selected(level_data)` | Compatibility signals. New integrations should use explicit host destination keys and `level_selection_requested(level_key)`. |
 | `level_selection_requested(level_key)` | The reusable campaign UI requests a host decision; the kit does not load the selected level. |
 | `terminal_action_requested(attempt_id, action_id)` | A result-panel action was selected; the host validates and applies it. |
@@ -265,25 +296,24 @@ The host reports score and facts; MetaPlayKit evaluates its configured condition
 | `life_use_requested()` / `revive_reward_claimed(level_data)` / `reward_doubling_claimed(next_level, balance)` | Deprecated compatibility notifications; new optional result actions are host-owned requests. |
 | `sfx_setting_changed(enabled)` / `music_setting_changed(enabled)` | A setting toggled; connect these to the host audio system. |
 | `item_purchased(path)` / `item_equipped(path)` / `currency_product_credited(product_key)` | A store action succeeded. |
-| `currency_purchase_result(result)` | One typed terminal result per accepted purchase operation, correlated by `operation_id`. Completion does not itself credit currency. |
 
 ## Compatibility
 
-Compatibility wrappers remain for legacy integrations, but campaign authorization and result actions now belong to the host. `complete_level()` requires the attempt ID, score, and condition facts; it returns the evaluated result and does not accept host-selected stars, progression, or optional rewards. Initial, resume, and next-level loading require an explicit host-selected destination. `load_next_level()` and `get_next_available_level()` do not infer one. The legacy `loading_completed` signal carries the same `(operation_id, level_data, resource)` result as `level_load_completed`; `get_loaded_resource(path)` remains available for consumers that still use the pull-based flow. `send_notification_ui()` is restricted to its documented alias map and is deprecated; migrate each call to an explicit facade operation or host-owned signal. Do not connect to both a legacy signal and its replacement for the same behavior.
+Compatibility wrappers remain for legacy integrations, but campaign authorization and result actions now belong to the host. `complete_level()` requires the attempt ID, score, and condition facts; it returns the evaluated result and does not accept host-selected stars, progression, or optional rewards. Initial, resume, and next-level loading require an explicit host-selected destination. `load_next_level()` and `get_next_available_level()` do not infer one. The legacy `loading_completed` signal carries the same `(operation_id, level_data, resource)` result as `level_load_completed`; `get_loaded_resource(path)` remains available for consumers that still use the pull-based flow. `send_notification_ui()` is restricted to its documented alias map and is deprecated; migrate each call to an explicit facade operation or host-owned signal. Currency purchase completion now requires provider verification data and a separate operation-scoped grant call. Version 3 snapshots are migrated once to version 4; snapshots older than version 3 are unsupported. Do not connect to both a legacy signal and its replacement for the same behavior.
 
 Public API compatibility follows semantic versioning aligned with the addon version: backward-compatible additions are minor releases; compatible fixes are patch releases; removed methods/signals or incompatible signature/behavior changes require a major release. Deprecated entry points remain available through the current major version. A removal requires a migration guide and deprecation notice in at least one minor release before the major version that removes it. Stable result codes are machine-readable contract values; human-readable messages may change and must not be used for branching.
 
 | Legacy entry point | Preferred replacement |
 | --- | --- |
 | `send_notification_ui(name, parameter)` | An explicit `TtpGuiApi` command/result signal or a host-owned event; arbitrary signal emission is unsupported. |
-| `add_coin_purchased(product_key)` / direct `credit_currency_product()` after an uncorrelated callback | `begin_currency_purchase()` followed by one correlated terminal method; credit only after host/provider verification. |
+| `add_coin_purchased(product_key)` / direct `credit_currency_product()` after an uncorrelated callback | `begin_currency_purchase()` followed by correlated provider verification and `apply_verified_currency_purchase(operation_id)`. |
 | Boolean `request_level_load(key)` | `request_level_load_result(key)` and `level_load_result`. |
 | Legacy load terminal signals | `level_load_result(result)`; handle only one terminal path per operation. |
 | `complete_level()` with legacy/mutable progression decisions | `begin_level_attempt()` and typed `complete_level(attempt_id, score, condition_facts, presentation)`. |
 
 ## Current limitations
 
-The kit has no backend, automatic file IO, or persistent save system. Progress, wallet, settings, purchases, and equipped items live in memory until the host explicitly exports a snapshot and stores it with its own save system. `credit_currency_product()` credits the configured amount for a product key; it does not validate a store receipt or provide a durable transaction ledger. The demo's desktop IAP adapter is a simulation. A shipped game must validate purchases with its platform provider, deduplicate provider transaction IDs, and protect online progress with server authority.
+The kit has no backend, automatic file IO, or persistent save system. Progress, wallet, settings, purchases, and equipped items live in memory until the host explicitly exports a snapshot and stores it with its own save system. Google Play signature checking runs in the client and does not query purchase status after refunds/revocations. The demo's desktop IAP adapter is a simulation. Production games should use a secure backend to verify Google Play purchase tokens, handle acknowledgements/consumption, deduplicate globally, and protect online progress with server authority; a host-supplied provider can perform that workflow.
 
 ## Legacy reference material
 

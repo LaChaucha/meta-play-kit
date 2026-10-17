@@ -104,22 +104,35 @@ func test_currency_purchase_operations_are_correlated_and_credit_only_after_conf
 	assert_signal_emit_count(api, "currency_purchase_result", 0)
 
 	var confirmed: MetaPlayResult = _call_result(
-		"complete_currency_purchase", [started.operation_id, "coins_small"]
+		"complete_currency_purchase", [started.operation_id, "coins_small", {
+			"provider": "host_test",
+			"verified": true,
+			"product_key": "coins_small",
+			"transaction_id": "play-token-1",
+		}]
 	)
 	assert_eq(confirmed.status, MetaPlayResult.Status.COMPLETED)
 	assert_eq(confirmed.operation_id, started.operation_id)
-	assert_true(bool(confirmed.context.get("provider_confirmed", false)))
+	assert_true(bool(confirmed.context.get("verified", false)))
 	assert_eq(api.call("get_currency_balance"), 100, "The operation result does not credit an entitlement implicitly.")
 	assert_signal_emit_count(api, "currency_purchase_result", 1)
 	var late_duplicate: MetaPlayResult = _call_result(
-		"complete_currency_purchase", [started.operation_id, "coins_small"]
+		"complete_currency_purchase", [started.operation_id, "coins_small", {
+			"provider": "host_test",
+			"verified": true,
+			"product_key": "coins_small",
+			"transaction_id": "play-token-1",
+		}]
 	)
 	assert_eq(late_duplicate.status, MetaPlayResult.Status.REJECTED)
 	assert_eq(late_duplicate.code, &"purchase.operation_stale")
 	assert_signal_emit_count(api, "currency_purchase_result", 1)
 
-	var credited: MetaPlayResult = _call_result("credit_currency_product", ["coins_small"])
+	var credited: MetaPlayResult = _call_result("apply_verified_currency_purchase", [started.operation_id])
 	assert_eq(credited.status, MetaPlayResult.Status.COMPLETED)
+	assert_eq(api.call("get_currency_balance"), 600)
+	var duplicate_credit: MetaPlayResult = _call_result("apply_verified_currency_purchase", [started.operation_id])
+	assert_eq(duplicate_credit.code, &"purchase.not_verified", "A completed operation can be applied only once.")
 	assert_eq(api.call("get_currency_balance"), 600)
 
 
@@ -152,14 +165,107 @@ func test_currency_purchase_rejects_unknown_products_and_mismatched_confirmation
 
 	var started: MetaPlayResult = _call_result("begin_currency_purchase", ["coins_small"])
 	var mismatch: MetaPlayResult = _call_result(
-		"complete_currency_purchase", [started.operation_id, "another_product"]
+		"complete_currency_purchase", [started.operation_id, "another_product", {}]
 	)
 	assert_eq(mismatch.status, MetaPlayResult.Status.FAILED)
 	assert_eq(mismatch.operation_id, started.operation_id)
 	assert_eq(mismatch.code, &"purchase.product_mismatch")
 	assert_eq(mismatch.context.get("confirmed_product_key"), "another_product")
 	assert_eq(api.call("get_currency_balance"), 100)
-	assert_signal_emit_count(api, "currency_purchase_result", 1)
+	var payload_mismatch_start: MetaPlayResult = _call_result("begin_currency_purchase", ["coins_small"])
+	var payload_mismatch: MetaPlayResult = _call_result("complete_currency_purchase", [payload_mismatch_start.operation_id, "coins_small", {
+		"provider": "host_test",
+		"verified": true,
+		"transaction_id": "wrong-product-token",
+		"product_key": "coins_large",
+	}])
+	assert_eq(payload_mismatch.status, MetaPlayResult.Status.FAILED)
+	assert_eq(payload_mismatch.code, &"purchase.product_mismatch")
+	assert_eq(api.call("get_currency_balance"), 100)
+	assert_signal_emit_count(api, "currency_purchase_result", 2)
+
+
+func test_currency_purchase_requires_verified_provider_result_and_snapshot_deduplicates_transaction() -> void:
+	watch_signals(api)
+	var started: MetaPlayResult = _call_result("begin_currency_purchase", ["coins_small"])
+	var rejected: MetaPlayResult = _call_result("complete_currency_purchase", [started.operation_id, "coins_small", {
+		"provider": "google_play",
+		"verified": false,
+		"product_key": "coins_small",
+		"transaction_id": "unverified-token",
+	}])
+	assert_eq(rejected.status, MetaPlayResult.Status.FAILED)
+	assert_eq(rejected.code, &"purchase.not_verified")
+	assert_eq(api.call("get_currency_balance"), 100)
+
+	var accepted: MetaPlayResult = _call_result("begin_currency_purchase", ["coins_small"])
+	var completed: MetaPlayResult = _call_result("complete_currency_purchase", [accepted.operation_id, "coins_small", {
+		"provider": "google_play",
+		"verified": true,
+		"product_key": "coins_small",
+		"transaction_id": "persistent-play-token",
+	}])
+	assert_eq(completed.status, MetaPlayResult.Status.COMPLETED)
+	var applied: MetaPlayResult = _call_result("apply_verified_currency_purchase", [accepted.operation_id])
+	assert_eq(applied.context.get("currency_balance"), 600)
+	var export_result: MetaPlayResult = _call_result("export_session_state", [])
+	var snapshot: Dictionary = export_result.context.get("snapshot", {}) as Dictionary
+	assert_eq(snapshot.get("schema_version"), 4)
+	var restore_result: MetaPlayResult = _call_result("restore_session_state", [snapshot])
+	assert_eq(restore_result.status, MetaPlayResult.Status.COMPLETED)
+	var replayed_start: MetaPlayResult = _call_result("begin_currency_purchase", ["coins_small"])
+	var replayed_complete: MetaPlayResult = _call_result("complete_currency_purchase", [replayed_start.operation_id, "coins_small", {
+		"provider": "google_play",
+		"verified": true,
+		"product_key": "coins_small",
+		"transaction_id": "persistent-play-token",
+	}])
+	assert_eq(replayed_complete.status, MetaPlayResult.Status.COMPLETED)
+	var replayed: MetaPlayResult = _call_result("apply_verified_currency_purchase", [replayed_start.operation_id])
+	assert_true(bool(replayed.context.get("duplicate", false)))
+	assert_eq(api.call("get_currency_balance"), 600)
+	var other_store_start: MetaPlayResult = _call_result("begin_currency_purchase", ["coins_small"])
+	var other_store_completion: MetaPlayResult = _call_result("complete_currency_purchase", [other_store_start.operation_id, "coins_small", {
+		"provider": "another_market",
+		"verified": true,
+		"product_key": "coins_small",
+		"transaction_id": "persistent-play-token",
+	}])
+	assert_eq(other_store_completion.status, MetaPlayResult.Status.COMPLETED)
+	var other_store_grant: MetaPlayResult = _call_result("apply_verified_currency_purchase", [other_store_start.operation_id])
+	assert_false(bool(other_store_grant.context.get("duplicate", false)), "Provider-scoped transaction keys must not collide across stores.")
+	assert_eq(api.call("get_currency_balance"), 1100)
+	assert_signal_emit_count(api, "currency_purchase_result", 4)
+
+
+func test_restored_google_play_purchase_requires_a_verified_restore_record_and_is_idempotent() -> void:
+	watch_signals(api)
+	var untrusted: MetaPlayResult = _call_result("apply_restored_currency_purchase", ["restore-token"])
+	assert_eq(untrusted.code, &"purchase.not_verified")
+	var restored: MetaPlayResult = _call_result("restore_purchase_records", [[{
+		"provider": "google_play",
+		"verified": true,
+		"product_key": "coins_small",
+		"transaction_id": "restore-token",
+	}]])
+	assert_eq(restored.status, MetaPlayResult.Status.COMPLETED)
+	var first_apply: MetaPlayResult = _call_result("apply_restored_currency_purchase", ["restore-token"])
+	assert_eq(first_apply.context.get("currency_balance"), 600)
+	var duplicate_apply: MetaPlayResult = _call_result("apply_restored_currency_purchase", ["restore-token"])
+	assert_true(bool(duplicate_apply.context.get("duplicate", false)))
+	assert_eq(api.call("get_currency_balance"), 600)
+
+
+func test_session_snapshot_v3_migrates_to_v4_with_empty_transaction_ledger() -> void:
+	var exported: MetaPlayResult = _call_result("export_session_state", [])
+	var snapshot: Dictionary = exported.context.get("snapshot", {}) as Dictionary
+	snapshot["schema_version"] = 3
+	var features: Dictionary = snapshot.get("features", {}) as Dictionary
+	features.erase("purchase_transactions")
+	snapshot["features"] = features
+	var migrated: MetaPlayResult = _call_result("restore_session_state", [snapshot])
+	assert_eq(migrated.status, MetaPlayResult.Status.COMPLETED)
+	assert_eq(migrated.context.get("schema_version"), 4)
 
 
 func test_legacy_notification_helper_uses_explicit_aliases_and_rejects_unknown_events() -> void:

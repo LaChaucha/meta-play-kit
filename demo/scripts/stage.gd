@@ -274,9 +274,11 @@ func _build_interface() -> void:
 
 	_iap = IapAdapter.new()
 	_iap.name = "IAP"
-	_iap.purchased.connect(_on_iap_purchased)
+	_iap.purchase_succeeded.connect(_on_iap_purchase_succeeded)
+	_iap.purchase_pending.connect(_on_iap_purchase_pending)
 	_iap.purchase_failed.connect(_on_iap_purchase_failed)
 	_iap.purchase_cancelled.connect(_on_iap_purchase_cancelled)
+	_iap.purchases_restored.connect(_on_iap_purchases_restored)
 	add_child(_iap)
 
 
@@ -720,20 +722,29 @@ func _accept_store_operation() -> void:
 		if start_result.status != MetaPlayResult.Status.ACCEPTED:
 			return
 		_pending_purchase_operation_id = start_result.operation_id
-		_iap.purchase(_pending_store_key, start_result.operation_id)
+		_iap.begin_purchase(_pending_store_key, start_result.operation_id)
 		_show_store()
 
 
-func _on_iap_purchased(operation_id: int, product_key: Variant) -> void:
-	TtpGuiApi.complete_currency_purchase(operation_id, product_key)
+func _on_iap_purchase_succeeded(operation_id: int, purchase: Dictionary) -> void:
+	var product_key: Variant = purchase.get("product_key")
+	TtpGuiApi.complete_currency_purchase(operation_id, product_key, purchase)
 
 
-func _on_iap_purchase_failed(operation_id: int) -> void:
-	TtpGuiApi.fail_currency_purchase(operation_id)
+func _on_iap_purchase_pending(operation_id: int, purchase: Dictionary) -> void:
+	TtpGuiApi.mark_currency_purchase_pending(operation_id, purchase)
+
+
+func _on_iap_purchase_failed(operation_id: int, error_code: StringName) -> void:
+	TtpGuiApi.fail_currency_purchase(operation_id, error_code)
 
 
 func _on_iap_purchase_cancelled(operation_id: int) -> void:
 	TtpGuiApi.cancel_currency_purchase(operation_id)
+
+
+func _on_iap_purchases_restored(purchases: Array) -> void:
+	TtpGuiApi.restore_purchase_records(purchases)
 
 
 func _on_currency_purchase_result(result: MetaPlayResult) -> void:
@@ -743,13 +754,20 @@ func _on_currency_purchase_result(result: MetaPlayResult) -> void:
 	match result.status:
 		MetaPlayResult.Status.COMPLETED:
 			var product_key: Variant = result.context.get("product_key")
-			var credit_result: MetaPlayResult = TtpGuiApi.credit_currency_product(product_key)
-			if credit_result.status == MetaPlayResult.Status.COMPLETED:
-				_show_toast("Compra simulada completada")
+			if bool(result.context.get("simulated", false)):
+				var credit_result: MetaPlayResult = TtpGuiApi.credit_currency_product(product_key)
+				_show_toast("Compra simulada completada" if credit_result.status == MetaPlayResult.Status.COMPLETED else "No se pudo acreditar la simulación")
 			else:
-				_show_toast("No se pudo acreditar la compra")
+				var applied: MetaPlayResult = TtpGuiApi.apply_verified_currency_purchase(result.operation_id)
+				if applied.status != MetaPlayResult.Status.COMPLETED:
+					_show_toast("No se pudo aplicar la compra verificada")
+				else:
+					var already_credited: bool = bool(applied.context.get("duplicate", false))
+					_show_toast("Compra ya procesada" if already_credited else "Compra verificada")
 		MetaPlayResult.Status.FAILED:
 			_show_toast("La compra no pudo completarse")
+		MetaPlayResult.Status.CANCELLED:
+			_show_toast("Compra cancelada")
 		MetaPlayResult.Status.CANCELLED:
 			_show_toast("Compra cancelada")
 	_show_store()

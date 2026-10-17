@@ -133,7 +133,7 @@ func test_campaign_projection_validation_is_atomic_and_order_is_host_defined() -
 	])
 
 
-func test_session_snapshot_v3_persists_progress_not_campaign_policy() -> void:
+func test_session_snapshot_v4_persists_progress_and_not_campaign_policy() -> void:
 	var started: MetaPlayResult = api.call("begin_level_attempt", "first") as MetaPlayResult
 	var attempt_id: String = str(started.context.get("attempt_id", ""))
 	api.call("complete_level", attempt_id, 950, {"goal_reached": true})
@@ -141,7 +141,7 @@ func test_session_snapshot_v3_persists_progress_not_campaign_policy() -> void:
 	var exported: MetaPlayResult = api.call("export_session_state") as MetaPlayResult
 	var snapshot: Dictionary = exported.context.get("snapshot", {}) as Dictionary
 	var progression: Dictionary = snapshot.get("progression", {}) as Dictionary
-	assert_eq(snapshot.get("schema_version"), 3)
+	assert_eq(snapshot.get("schema_version"), 4)
 	assert_eq(progression.get("level_progress"), {"first": {"completed": true, "best_score": 950, "best_stars": 3}, "second": {"completed": false, "best_score": 0, "best_stars": 0}})
 	assert_false(progression.has("levels"), "The kit snapshot does not persist host catalog or availability policy.")
 	api.call("configure_campaign_projection", [{"key": "first", "available": false, "selectable": false}, {"key": "second", "available": true, "selectable": true}])

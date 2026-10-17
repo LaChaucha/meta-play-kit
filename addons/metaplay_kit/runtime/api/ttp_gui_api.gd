@@ -22,8 +22,12 @@ const RESULT_CODE_PURCHASE_IN_PROGRESS: StringName = &"purchase.in_progress"
 const RESULT_CODE_PURCHASE_OPERATION_STALE: StringName = &"purchase.operation_stale"
 const RESULT_CODE_PURCHASE_PRODUCT_MISMATCH: StringName = &"purchase.product_mismatch"
 const RESULT_CODE_PURCHASE_PROVIDER_FAILED: StringName = &"purchase.provider_failed"
-const SESSION_SNAPSHOT_VERSION: int = 3
+const RESULT_CODE_PURCHASE_NOT_VERIFIED: StringName = &"purchase.not_verified"
+const RESULT_CODE_PURCHASE_TRANSACTION_INVALID: StringName = &"purchase.transaction_invalid"
+const SESSION_SNAPSHOT_VERSION: int = 4
+const PREVIOUS_SESSION_SNAPSHOT_VERSION: int = 3
 const COMPLETION_FEATURE_STATE_KEY: String = "level_completion"
+const PURCHASE_TRANSACTIONS_FEATURE_STATE_KEY: String = "purchase_transactions"
 
 signal level_load_started(operation_id: int, level_data: Dictionary)
 signal level_load_completed(operation_id: int, level_data: Dictionary, resource: Resource)
@@ -48,6 +52,9 @@ signal item_purchased(item_path: Array)
 signal item_equipped(item_path: Array)
 signal currency_product_credited(product_key: Variant)
 signal currency_purchase_result(result: MetaPlayResult)
+signal currency_purchase_pending(operation_id: int, purchase: Dictionary)
+signal currency_purchase_applied(result: MetaPlayResult)
+signal currency_purchases_restored(purchases: Array)
 signal store_catalog_changed()
 signal level_attempt_started(attempt_id: String, level_key: Variant)
 signal level_attempt_completed(attempt_id: String, result: Dictionary)
@@ -104,6 +111,8 @@ var _next_load_operation_id: int = 0
 var _next_purchase_operation_id: int = 0
 var _active_purchase_operation_id: int = 0
 var _active_purchase_product_key: Variant = null
+var _verified_purchase_grants: Dictionary = {}
+var _verified_restored_purchases: Dictionary = {}
 var _active_load_operation_id: int = 0
 var _active_load_progress: float = 0.0
 var _active_load_progress_emitted: bool = false
@@ -132,6 +141,8 @@ func _exit_tree() -> void:
 			"product_key": _active_purchase_product_key,
 			"reason": "api_shutdown",
 		}))
+	_verified_purchase_grants.clear()
+	_verified_restored_purchases.clear()
 	if _load_request_active:
 		_finish_active_load_as_cancelled()
 	else:
@@ -525,6 +536,7 @@ func get_session_feature_state(feature_key: StringName) -> Dictionary:
 func export_session_state() -> MetaPlayResult:
 	var feature_state: Dictionary = _session_feature_state.duplicate(true)
 	feature_state[COMPLETION_FEATURE_STATE_KEY] = _model.export_completion_state()
+	feature_state[PURCHASE_TRANSACTIONS_FEATURE_STATE_KEY] = _model.purchase_transactions.duplicate(true)
 	var snapshot: Dictionary = {
 		"schema_version": SESSION_SNAPSHOT_VERSION,
 		"progression": {"level_progress": _model.get_all_level_progress()},
@@ -539,13 +551,14 @@ func export_session_state() -> MetaPlayResult:
 
 
 func restore_session_state(snapshot: Dictionary) -> MetaPlayResult:
-	if int(snapshot.get("schema_version", -1)) != SESSION_SNAPSHOT_VERSION:
+	var normalized_snapshot: Dictionary = _migrate_session_snapshot(snapshot)
+	if normalized_snapshot.is_empty():
 		return _reject_with_result(&"session.snapshot_unsupported", "The session snapshot version is unsupported.")
-	var raw_progression: Variant = snapshot.get("progression")
-	var raw_wallet: Variant = snapshot.get("wallet")
-	var raw_settings: Variant = snapshot.get("settings")
-	var raw_inventory: Variant = snapshot.get("inventory")
-	var raw_features: Variant = snapshot.get("features")
+	var raw_progression: Variant = normalized_snapshot.get("progression")
+	var raw_wallet: Variant = normalized_snapshot.get("wallet")
+	var raw_settings: Variant = normalized_snapshot.get("settings")
+	var raw_inventory: Variant = normalized_snapshot.get("inventory")
+	var raw_features: Variant = normalized_snapshot.get("features")
 	if not raw_progression is Dictionary or not raw_wallet is Dictionary or not raw_settings is Dictionary or not raw_inventory is Dictionary or not raw_features is Dictionary:
 		return _reject_with_result(&"session.snapshot_invalid", "The session snapshot is incomplete or invalid.")
 	var progression: Dictionary = raw_progression as Dictionary
@@ -555,10 +568,11 @@ func restore_session_state(snapshot: Dictionary) -> MetaPlayResult:
 	var raw_progress: Variant = progression.get("level_progress")
 	var raw_items: Variant = inventory.get("items")
 	var raw_completion: Variant = features.get(COMPLETION_FEATURE_STATE_KEY)
+	var raw_purchase_transactions: Variant = features.get(PURCHASE_TRANSACTIONS_FEATURE_STATE_KEY)
 	var raw_balance: Variant = wallet.get("currency_balance")
-	if not raw_progress is Dictionary or not raw_items is Dictionary or not raw_completion is Dictionary or not raw_balance is int or int(raw_balance) < 0:
+	if not raw_progress is Dictionary or not raw_items is Dictionary or not raw_completion is Dictionary or not raw_purchase_transactions is Dictionary or not raw_balance is int or int(raw_balance) < 0:
 		return _reject_with_result(&"session.snapshot_invalid", "The session snapshot is missing required domain state.")
-	if not _is_snapshot_serializable(snapshot):
+	if not _is_snapshot_serializable(normalized_snapshot):
 		return _reject_with_result(&"session.snapshot_invalid", "The session snapshot contains non-serializable values.")
 	var restored_progress: Dictionary = (raw_progress as Dictionary).duplicate(true)
 	for level_key: Variant in restored_progress.keys():
@@ -572,17 +586,54 @@ func restore_session_state(snapshot: Dictionary) -> MetaPlayResult:
 		return _reject_with_result(&"session.snapshot_invalid", "The session snapshot does not match the configured level catalog.")
 	if not _model.can_restore_completion_state(raw_completion as Dictionary, _model.levels):
 		return _reject_with_result(&"session.snapshot_invalid", "The session completion state is invalid.")
+	if not _is_purchase_transaction_ledger_valid(raw_purchase_transactions as Dictionary):
+		return _reject_with_result(&"session.snapshot_invalid", "The purchase transaction ledger is invalid.")
 	var restored_features: Dictionary = features.duplicate(true)
 	restored_features.erase(COMPLETION_FEATURE_STATE_KEY)
+	restored_features.erase(PURCHASE_TRANSACTIONS_FEATURE_STATE_KEY)
 	_model.level_progress = restored_progress
 	_model.configuration = (raw_settings as Dictionary).duplicate(true)
 	_model.game_items = (raw_items as Dictionary).duplicate(true)
 	_model.coins = int(raw_balance)
+	_model.purchase_transactions = (raw_purchase_transactions as Dictionary).duplicate(true)
 	var completion_restored: bool = _model.restore_completion_state(raw_completion as Dictionary)
 	assert(completion_restored, "Validated completion state must restore atomically.")
 	_session_feature_state = restored_features
 	session_restored.emit(SESSION_SNAPSHOT_VERSION)
 	return MetaPlayResult.completed(0, {"schema_version": SESSION_SNAPSHOT_VERSION})
+
+
+func _migrate_session_snapshot(snapshot: Dictionary) -> Dictionary:
+	var snapshot_version: int = int(snapshot.get("schema_version", -1))
+	if snapshot_version == SESSION_SNAPSHOT_VERSION:
+		return snapshot.duplicate(true)
+	if snapshot_version != PREVIOUS_SESSION_SNAPSHOT_VERSION:
+		return {}
+	var migrated: Dictionary = snapshot.duplicate(true)
+	var raw_features: Variant = migrated.get("features")
+	if not raw_features is Dictionary:
+		return migrated
+	var features: Dictionary = (raw_features as Dictionary).duplicate(true)
+	features[PURCHASE_TRANSACTIONS_FEATURE_STATE_KEY] = {}
+	migrated["features"] = features
+	migrated["schema_version"] = SESSION_SNAPSHOT_VERSION
+	return migrated
+
+
+func _is_purchase_transaction_ledger_valid(ledger: Dictionary) -> bool:
+	for transaction_id: Variant in ledger.keys():
+		var raw_entry: Variant = ledger[transaction_id]
+		if not transaction_id is String or str(transaction_id).strip_edges().is_empty() or not raw_entry is Dictionary:
+			return false
+		var entry: Dictionary = raw_entry as Dictionary
+		var entry_transaction_id: String = str(entry.get("transaction_id", ""))
+		var entry_provider: String = str(entry.get("provider", ""))
+		var expected_key: String = "%s:%s" % [entry_provider, entry_transaction_id]
+		if entry_transaction_id.is_empty() or entry_provider.is_empty() or str(transaction_id) != expected_key or str(entry.get("product_key", "")).is_empty():
+			return false
+		if not entry.get("currency_added") is int or int(entry.get("currency_added", -1)) < 0:
+			return false
+	return true
 
 
 func _is_snapshot_serializable(value: Variant) -> bool:
@@ -767,7 +818,7 @@ func begin_currency_purchase(product_key: Variant) -> MetaPlayResult:
 			"A currency purchase is already in progress.",
 			{"active_operation_id": _active_purchase_operation_id}
 		)
-	if not _model.coin_values.has(product_key):
+	if product_key == null or str(product_key).strip_edges().is_empty() or not _model.coin_values.has(product_key):
 		return _reject_with_result(
 			RESULT_CODE_CURRENCY_PRODUCT_NOT_FOUND,
 			"The currency purchase references an unknown product.",
@@ -779,7 +830,21 @@ func begin_currency_purchase(product_key: Variant) -> MetaPlayResult:
 	return MetaPlayResult.accepted(_active_purchase_operation_id, {"product_key": product_key})
 
 
-func complete_currency_purchase(operation_id: int, confirmed_product_key: Variant) -> MetaPlayResult:
+func mark_currency_purchase_pending(operation_id: int, purchase: Dictionary) -> MetaPlayResult:
+	if not _is_active_purchase(operation_id):
+		return _reject_stale_purchase(operation_id)
+	if str(purchase.get("product_key", "")) != str(_active_purchase_product_key) or not bool(purchase.get("verified", false)):
+		return _reject_with_result(RESULT_CODE_PURCHASE_NOT_VERIFIED, "The pending purchase is not verified for the active product.", {"operation_id": operation_id})
+	var safe_purchase: Dictionary = purchase.duplicate(true)
+	currency_purchase_pending.emit(operation_id, safe_purchase)
+	return MetaPlayResult.accepted(operation_id, {"pending": true, "purchase": safe_purchase})
+
+
+func complete_currency_purchase(
+		operation_id: int,
+		confirmed_product_key: Variant,
+		purchase: Dictionary = {}
+	) -> MetaPlayResult:
 	if not _is_active_purchase(operation_id):
 		return _reject_stale_purchase(operation_id)
 	if confirmed_product_key != _active_purchase_product_key:
@@ -788,19 +853,103 @@ func complete_currency_purchase(operation_id: int, confirmed_product_key: Varian
 			RESULT_CODE_PURCHASE_PRODUCT_MISMATCH,
 			{"product_key": _active_purchase_product_key, "confirmed_product_key": confirmed_product_key}
 		))
-	return _finish_currency_purchase(MetaPlayResult.completed(operation_id, {
+	if str(purchase.get("product_key", "")) != str(_active_purchase_product_key):
+		return _finish_currency_purchase(MetaPlayResult.failed(
+			operation_id,
+			RESULT_CODE_PURCHASE_PRODUCT_MISMATCH,
+			{"product_key": _active_purchase_product_key, "purchase_product_key": purchase.get("product_key")}
+		))
+	var provider_id: String = str(purchase.get("provider", ""))
+	var simulated: bool = provider_id == "simulation" and bool(purchase.get("simulated", false)) and not bool(purchase.get("verified", false))
+	if not simulated:
+		var transaction_id: String = str(purchase.get("transaction_id", "")).strip_edges()
+		if provider_id.is_empty() or transaction_id.is_empty() or not bool(purchase.get("verified", false)):
+			return _finish_currency_purchase(MetaPlayResult.failed(
+				operation_id,
+				RESULT_CODE_PURCHASE_NOT_VERIFIED,
+				{"product_key": _active_purchase_product_key}
+			))
+	var completed_context: Dictionary = {
 		"product_key": _active_purchase_product_key,
-		"provider_confirmed": true,
-	}))
+		"provider": provider_id,
+		"transaction_id": str(purchase.get("transaction_id", "")),
+		"verification": str(purchase.get("verification", "")),
+		"verified": bool(purchase.get("verified", false)),
+		"simulated": simulated,
+	}
+	if not simulated:
+		_verified_purchase_grants[operation_id] = completed_context.duplicate(true)
+	return _finish_currency_purchase(MetaPlayResult.completed(operation_id, completed_context))
 
 
-func fail_currency_purchase(operation_id: int) -> MetaPlayResult:
+func apply_verified_currency_purchase(operation_id: int) -> MetaPlayResult:
+	var grant_raw: Variant = _verified_purchase_grants.get(operation_id)
+	if not grant_raw is Dictionary:
+		return _reject_with_result(RESULT_CODE_PURCHASE_NOT_VERIFIED, "No verified purchase is available for this operation ID.", {"operation_id": operation_id})
+	var grant: Dictionary = grant_raw as Dictionary
+	var outcome: Dictionary = _model.record_verified_currency_purchase(
+		grant.get("product_key"),
+		str(grant.get("transaction_id", "")),
+		str(grant.get("provider", ""))
+	)
+	if not bool(outcome.get("ok", false)):
+		return _reject_store_result(outcome, RESULT_CODE_PURCHASE_TRANSACTION_INVALID, "Could not apply the verified purchase.")
+	_verified_purchase_grants.erase(operation_id)
+	var result: MetaPlayResult = MetaPlayResult.completed(operation_id, outcome)
+	if not bool(outcome.get("duplicate", false)):
+		currency_purchase_applied.emit(result)
+	return result
+
+
+func get_verified_purchase_transaction(transaction_id: String, provider_id: String) -> Dictionary:
+	var transaction_key: String = "%s:%s" % [provider_id, transaction_id]
+	var entry: Variant = _model.purchase_transactions.get(transaction_key, {})
+	return (entry as Dictionary).duplicate(true) if entry is Dictionary else {}
+
+
+func restore_purchase_records(purchases: Array) -> MetaPlayResult:
+	var verified_records: Array = []
+	var restored_by_transaction: Dictionary = {}
+	for raw_purchase: Variant in purchases:
+		if not raw_purchase is Dictionary:
+			continue
+		var purchase: Dictionary = raw_purchase as Dictionary
+		if not bool(purchase.get("verified", false)) or str(purchase.get("provider", "")).is_empty() or str(purchase.get("transaction_id", "")).is_empty():
+			continue
+		var safe_purchase: Dictionary = purchase.duplicate(true)
+		var transaction_id: String = str(safe_purchase.get("transaction_id", ""))
+		verified_records.append(safe_purchase)
+		restored_by_transaction[transaction_id] = safe_purchase
+	_verified_restored_purchases = restored_by_transaction
+	currency_purchases_restored.emit(verified_records.duplicate(true))
+	return MetaPlayResult.completed(0, {"purchases": verified_records})
+
+
+func apply_restored_currency_purchase(transaction_id: String) -> MetaPlayResult:
+	var purchase_raw: Variant = _verified_restored_purchases.get(transaction_id)
+	if not purchase_raw is Dictionary:
+		return _reject_with_result(RESULT_CODE_PURCHASE_NOT_VERIFIED, "The transaction is not part of the latest verified restore result.", {"transaction_id": transaction_id})
+	var purchase: Dictionary = purchase_raw as Dictionary
+	var outcome: Dictionary = _model.record_verified_currency_purchase(
+		purchase.get("product_key"),
+		transaction_id,
+		str(purchase.get("provider", ""))
+	)
+	if not bool(outcome.get("ok", false)):
+		return _reject_store_result(outcome, RESULT_CODE_PURCHASE_TRANSACTION_INVALID, "Could not apply the restored purchase.")
+	var result: MetaPlayResult = MetaPlayResult.completed(0, outcome)
+	if not bool(outcome.get("duplicate", false)):
+		currency_purchase_applied.emit(result)
+	return result
+
+
+func fail_currency_purchase(operation_id: int, provider_code: StringName = &"") -> MetaPlayResult:
 	if not _is_active_purchase(operation_id):
 		return _reject_stale_purchase(operation_id)
 	return _finish_currency_purchase(MetaPlayResult.failed(
 		operation_id,
 		RESULT_CODE_PURCHASE_PROVIDER_FAILED,
-		{"product_key": _active_purchase_product_key}
+		{"product_key": _active_purchase_product_key, "provider_code": provider_code}
 	))
 
 
