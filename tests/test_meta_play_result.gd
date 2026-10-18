@@ -1,4 +1,4 @@
-extends "res://tests/test_case.gd"
+extends "res://addons/metaplay_kit/tests/test_case.gd"
 
 
 func test_synchronous_success_is_completed_without_error_code_or_operation_id() -> void:

@@ -1,7 +1,6 @@
-extends "res://tests/test_case.gd"
+extends "res://addons/metaplay_kit/tests/test_case.gd"
 
 const ModelScript: GDScript = preload("res://addons/metaplay_kit/runtime/model/meta_play_model.gd")
-const LevelScript: GDScript = preload("res://demo/scripts/level.gd")
 
 var model: MetaPlayModel
 
@@ -125,18 +124,3 @@ func test_configuration_toggles_emit_the_updated_snapshot() -> void:
 	assert_signal_emit_count(model, "configuration_changed", 2)
 	var snapshot: Dictionary = get_signal_args(model, "configuration_changed")[0]
 	assert_false(bool(snapshot.get("music", true)))
-
-
-func test_demo_level_has_a_safe_start_stop_and_revive_lifecycle() -> void:
-	var level: MetaPlayDemoLevel = add_child_autofree(LevelScript.new()) as MetaPlayDemoLevel
-	watch_signals(level)
-	level.configure("level1", null)
-	level.start_level()
-	assert_true(level.active)
-	assert_signal_emitted(level, "started")
-	level.stop_level()
-	assert_false(level.active)
-	assert_signal_emitted(level, "stopped")
-	level.revive()
-	assert_true(level.active)
-	assert_signal_emitted(level, "revived")

@@ -1,4 +1,4 @@
-extends "res://tests/test_case.gd"
+extends "res://addons/metaplay_kit/tests/test_case.gd"
 
 const ApiScript: GDScript = preload("res://addons/metaplay_kit/runtime/api/ttp_gui_api.gd")
 
@@ -290,7 +290,7 @@ func test_host_item_icon_paths_remain_serializable_in_inventory_snapshots() -> v
 			"type": 0,
 			"price": 10,
 			"bought": false,
-			"icon_path": "res://demo/assets/world/home_room.png",
+			"icon_path": "res://addons/metaplay_kit/assets/ui/icon_coin.png",
 		},
 	})
 	var exported: MetaPlayResult = _call_result("export_session_state", [])
@@ -299,7 +299,7 @@ func test_host_item_icon_paths_remain_serializable_in_inventory_snapshots() -> v
 	var inventory: Dictionary = snapshot.get("inventory", {}) as Dictionary
 	var items: Dictionary = inventory.get("items", {}) as Dictionary
 	var item: Dictionary = items.get("host_art_item", {}) as Dictionary
-	assert_eq(item.get("icon_path"), "res://demo/assets/world/home_room.png")
+	assert_eq(item.get("icon_path"), "res://addons/metaplay_kit/assets/ui/icon_coin.png")
 
 
 func _call_result(method_name: String, arguments: Array) -> MetaPlayResult:

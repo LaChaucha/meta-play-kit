@@ -1,9 +1,9 @@
 # test_case.gd — base class for the bundled zero-install unit-test framework.
 #
-# Copy this file to res://tests/test_case.gd (the runner's --init-mini does it
+# Copy this file to the configured tests directory (the runner's --init-mini does it
 # for you) and write a suite as:
 #
-#   extends "res://tests/test_case.gd"
+#   extends "res://addons/metaplay_kit/tests/test_case.gd"
 #
 #   func test_two_plus_two() -> void:
 #       assert_eq(2 + 2, 4)

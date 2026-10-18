@@ -1,33 +1,28 @@
 # MetaPlayKit
 
-MetaPlayKit is a reusable Godot 4.7 addon being developed as a production-oriented meta-game layer for multiple host games. It provides a public `TtpGuiApi` facade, progression and store rules, asynchronous level-resource loading, reusable UI components, a theme, and UI assets. This repository is an early product baseline with a sample consumer: the sample demonstrates integration but does not define the host game's screens or the product boundary. See [PRODUCT.md](PRODUCT.md) for the product intent, ownership boundaries, and readiness gates.
-
-## Run the sample consumer
-
-Open the repository root's `project.godot` in Godot 4.7 and run the main scene. The project uses a 1280 × 720 logical viewport with `canvas_items` stretching.
+MetaPlayKit is a reusable Godot 4.7 addon being developed as a production-oriented meta-game layer for multiple host games. It provides a public `TtpGuiApi` facade, progression and store rules, asynchronous level-resource loading, reusable UI components, a theme, and UI assets. This repository contains the addon source and its unit tests; the sample consumer project is not part of the addon repository. See [PRODUCT.md](PRODUCT.md) for the product intent, ownership boundaries, and readiness gates.
 
 ## Repository layout
 
 | Path | Purpose |
 | --- | --- |
-| `addons/metaplay_kit/plugin.cfg` and `plugin.gd` | Editor plugin; enabling it registers the `TtpGuiApi` autoload. |
-| `addons/metaplay_kit/runtime/api/` | Public facade, commands, queries, and signals. |
-| `addons/metaplay_kit/runtime/model/` | Progression, wallet, settings, and store rules. |
-| `addons/metaplay_kit/runtime/systems/` | Asynchronous resource loading. |
-| `addons/metaplay_kit/runtime/components/`, `ui/` | Reusable UI controls and loading presentation. |
-| `addons/metaplay_kit/runtime/ui/meta_play_ui_config.gd` | Typed, versioned presentation profile for reusable kit UI components. |
-| `addons/metaplay_kit/runtime/platform/` | Optional platform purchase adapter and desktop mock. |
-| `addons/metaplay_kit/assets/` | Reusable theme and UI art. |
+| `plugin.cfg`, `plugin.gd` | Editor plugin; enabling it registers the `TtpGuiApi` autoload. |
+| `runtime/api/` | Public facade, commands, queries, and signals. |
+| `runtime/model/` | Progression, wallet, settings, and store rules. |
+| `runtime/systems/` | Asynchronous resource loading. |
+| `runtime/components/`, `runtime/ui/` | Reusable UI controls and loading presentation. |
+| `runtime/ui/meta_play_ui_config.gd` | Typed, versioned presentation profile for reusable kit UI components. |
+| `runtime/platform/` | Optional platform purchase adapters. |
+| `assets/` | Reusable theme and UI art. |
+| `tests/` | Unit tests for addon behavior and API contracts. |
+| `tools/package_addon.py` | Builds an installable ZIP without tests or development files. |
 | `PRODUCT.md` | Product direction, responsibility boundaries, and production readiness gates. |
-| `demo/scenes/`, `demo/scripts/` | Sample consumer app and level; not required by the addon runtime. |
-| `tests/`, `scenarios/` | Domain/loading tests and repeatable demo flows. |
-| `interfaces/` | Archived Godot 3 reference material; not part of the runtime. |
 
-A consuming game needs `addons/metaplay_kit/`, its own game content, and the autoload/plugin setup described below.
+A consuming game installs the `metaplay_kit/` folder under its own `addons/` directory and uses the setup described below.
 
 ## Install
 
-1. Copy `addons/metaplay_kit/` into the consuming project's `addons/` directory.
+1. Download the versioned release ZIP and extract its `metaplay_kit/` folder into the consuming project's `addons/` directory. The package excludes tests and development tools; no Git submodule is required.
 2. Open the project in Godot and allow it to import the addon.
 3. In **Project > Project Settings > Plugins**, enable **MetaPlayKit**. The plugin registers the `TtpGuiApi` autoload. Resolve any existing autoload name/path conflict first.
 4. Optionally set `gui/theme/custom` to `res://addons/metaplay_kit/assets/theme/metaplay.tres`. The plugin does not replace the host game's theme automatically.
@@ -352,12 +347,8 @@ Public API compatibility follows semantic versioning aligned with the addon vers
 
 ## Current limitations
 
-The kit has no backend, automatic file IO, or persistent save system. Progress, wallet, settings, purchases, and equipped items live in memory until the host explicitly exports a snapshot and stores it with its own save system. Google Play signature checking runs in the client and does not query purchase status after refunds/revocations. The demo's desktop IAP adapter is a simulation. Production games should use a secure backend to verify Google Play purchase tokens, handle acknowledgements/consumption, deduplicate globally, and protect online progress with server authority; a host-supplied provider can perform that workflow.
-
-## Legacy reference material
-
-Visual assets used by the demo were extracted from `interfaces/testAddons` with `demo/tools/extract_legacy_assets.py`. The archived folder remains available for reference; `interfaces/.gdignore` prevents Godot from importing the old Godot 3 project.
+The kit has no backend, automatic file IO, or persistent save system. Progress, wallet, settings, purchases, and equipped items live in memory until the host explicitly exports a snapshot and stores it with its own save system. Google Play signature checking runs in the client and does not query purchase status after refunds/revocations. The desktop IAP adapter is a simulation. Production games should use a secure backend to verify Google Play purchase tokens, handle acknowledgements/consumption, deduplicate globally, and protect online progress with server authority; a host-supplied provider can perform that workflow.
 
 ## Verification
 
-`tests/` covers model invariants and repeated/invalid level loading, including retrying the same path after success, failure, or cancellation. JSON files in `scenarios/` exercise the demo's navigation, purchases, results, rewards, settings, and pause flows.
+`tests/` covers addon model invariants and API contracts. Run these tests from a Godot consumer project that has this checkout installed at `addons/metaplay_kit/`, using the Godot test runner with `--tests-dir addons/metaplay_kit/tests`. Demo navigation and integration scenarios are tested by the separate consumer repository.

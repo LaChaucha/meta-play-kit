@@ -1,4 +1,4 @@
-extends "res://tests/test_case.gd"
+extends "res://addons/metaplay_kit/tests/test_case.gd"
 
 const ApiScript: GDScript = preload("res://addons/metaplay_kit/runtime/api/ttp_gui_api.gd")
 const StoreItemButtonScript: GDScript = preload("res://addons/metaplay_kit/runtime/components/store_item_button.gd")
@@ -67,7 +67,7 @@ func test_optional_text_fields_use_english_fallbacks_and_validate_score_placehol
 
 func test_host_project_texture_can_be_supplied_as_a_typed_kit_asset_override() -> void:
 	var host_profile: MetaPlayUIConfig = MetaPlayUIConfig.new()
-	var host_texture: Texture2D = load("res://demo/assets/world/home_room.png") as Texture2D
+	var host_texture: Texture2D = load("res://addons/metaplay_kit/assets/ui/star_on.png") as Texture2D
 	assert_not_null(host_texture)
 	host_profile.active_star_texture = host_texture
 	api.call("configure_ui_presentation", host_profile)
@@ -80,10 +80,10 @@ func test_store_item_loads_an_optional_texture_from_the_host_project_path() -> v
 	var item_button: StoreItemButton = StoreItemButtonScript.new() as StoreItemButton
 	item_button.set_item({
 		"title": "Host item",
-		"icon_path": "res://demo/assets/world/home_room.png",
+		"icon_path": "res://addons/metaplay_kit/assets/ui/star_on.png",
 	}, "host_item")
 	assert_not_null(item_button.icon)
-	assert_eq(item_button.icon.resource_path, "res://demo/assets/world/home_room.png")
+	assert_eq(item_button.icon.resource_path, "res://addons/metaplay_kit/assets/ui/star_on.png")
 	item_button.free()
 
 

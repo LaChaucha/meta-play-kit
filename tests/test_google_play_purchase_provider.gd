@@ -1,4 +1,4 @@
-extends "res://tests/test_case.gd"
+extends "res://addons/metaplay_kit/tests/test_case.gd"
 
 const ProviderScript: GDScript = preload("res://addons/metaplay_kit/runtime/platform/google_play_purchase_provider.gd")
 

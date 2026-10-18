@@ -4,7 +4,7 @@
 
 MetaPlayKit is a reusable Godot addon intended to provide a dependable meta-game layer for multiple host games. It should let a host integrate level progression, a wallet, a configurable store, configured level-completion rewards, settings, and reusable UI through a stable public contract, while keeping gameplay and presentation under host control.
 
-The repository currently contains an early product baseline and a sample consumer. The sample demonstrates integration; it does not define the product boundary or imply that every production capability is already implemented.
+The repository contains the addon source, its tests, and product documentation. The sample consumer is maintained separately and demonstrates integration; it does not define the product boundary or imply that every production capability is already implemented.
 
 ## Product boundary
 
@@ -57,7 +57,7 @@ Before describing a release as production-ready, define and meet these gates for
 - **State ownership:** provide a versioned, validated save/restore contract without imposing a storage provider. Tracked by [issue #3](https://github.com/LaChaucha/meta-play-kit/issues/3).
 - **Host integration:** support host-owned navigation, explicit progression policies, and optional UI configuration. Tracked by [issue #4](https://github.com/LaChaucha/meta-play-kit/issues/4), [issue #5](https://github.com/LaChaucha/meta-play-kit/issues/5), and [issue #11](https://github.com/LaChaucha/meta-play-kit/issues/11).
 - **Platform commerce:** do not grant real-money entitlements until provider verification and transaction idempotency are defined. Tracked by [issue #7](https://github.com/LaChaucha/meta-play-kit/issues/7).
-- **Ownership boundaries:** lives and calendar-based engagement are host-owned. MetaPlayKit may report generic action intents and resume a host-authorized gameplay attempt, but it does not manage lives, daily connections, streaks, or time-based reward eligibility. Daily rewards and streaks in [issue #9](https://github.com/LaChaucha/meta-play-kit/issues/9) are out of current scope; quests in [issue #10](https://github.com/LaChaucha/meta-play-kit/issues/10) require a separate product decision.
+- **Ownership boundaries:** lives and calendar-based engagement are host-owned. MetaPlayKit may report generic action intents and resume a host-authorized gameplay attempt, but it does not manage lives, daily connections, streaks, time-based reward eligibility, or quests. Daily rewards and streaks in [issue #9](https://github.com/LaChaucha/meta-play-kit/issues/9) and quests in [issue #10](https://github.com/LaChaucha/meta-play-kit/issues/10) are out of current scope.
 - **Evidence:** maintain automated tests for domain rules and API contracts, plus clean-project integration checks for the supported installation path.
 
 These gates are a release checklist to refine, not a promise that every optional feature must ship in the first product release.
@@ -66,4 +66,4 @@ These gates are a release checklist to refine, not a promise that every optional
 
 Treat the GitHub issues as the active product backlog. Resolve foundational contracts first: load lifecycle, reward idempotency, state persistence, and operation results. Then finalize host navigation and progression policies. Platform purchase verification and configurable UI can build on those contracts. Any future calendar-based engagement capability requires an explicit product-scope decision before entering the backlog. Each epic should be split into independently reviewable features before implementation.
 
-Keep the sample consumer useful as an integration example and regression surface. It may exercise product capabilities, but sample-only screens, labels, and flows should stay outside the reusable runtime unless a separate product requirement justifies them.
+Keep the separately maintained sample consumer useful as an integration example and regression surface. It may exercise product capabilities, but sample-only screens, labels, and flows should stay outside the reusable runtime unless a separate product requirement justifies them.
